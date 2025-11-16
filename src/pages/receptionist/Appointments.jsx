@@ -440,19 +440,25 @@ const ReceptionistAppointments = () => {
       setProcessingStatus(appointmentToBill.id);
       
       // Prepare updated services with adjustments and new services/products
+      // Remove status field if it exists (redundant - appointment has status, not individual services)
       const updatedServices = billData.items
         .filter(item => item.type === 'service')
-        .map(item => ({
-          serviceId: item.id,
-          serviceName: item.name,
-          price: item.basePrice,
-          adjustedPrice: item.price,
-          adjustment: item.adjustment || 0,
-          adjustmentReason: item.adjustmentReason || '',
-          stylistId: item.stylistId || '',
-          stylistName: item.stylistName || '',
-          clientType: item.clientType || 'R'
-        }));
+        .map(item => {
+          const service = {
+            serviceId: item.id,
+            serviceName: item.name,
+            price: item.basePrice,
+            adjustedPrice: item.price,
+            adjustment: item.adjustment || 0,
+            adjustmentReason: item.adjustmentReason || '',
+            stylistId: item.stylistId || '',
+            stylistName: item.stylistName || '',
+            clientType: item.clientType || 'R'
+          };
+          // Explicitly remove status if it exists
+          delete service.status;
+          return service;
+        });
       
       // Store products in appointment for later billing
       const products = billData.items
@@ -466,16 +472,14 @@ const ReceptionistAppointments = () => {
         }));
       
       // Update appointment with services, products, and status
+      // Store discount amount/rate and tax rate (not computed values)
       const appointmentUpdates = {
         status: targetStatus,
         services: updatedServices.length > 0 ? updatedServices : appointmentToBill.services,
         products: products.length > 0 ? products : undefined, // Store products for later billing
-        billingItems: billData.items, // Store all items (services + products) for billing later
-        subtotal: billData.subtotal,
-        discount: billData.discount,
-        discountType: billData.discountType,
-        tax: billData.tax,
-        total: billData.total
+        discount: billData.discount || 0, // Discount amount or percentage value (not computed)
+        discountType: billData.discountType || 'fixed',
+        taxRate: billData.taxRate || 0 // Tax rate (not computed tax amount)
       };
       
       await updateAppointment(appointmentToBill.id, appointmentUpdates, currentUser);

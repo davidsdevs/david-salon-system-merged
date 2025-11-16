@@ -21,6 +21,15 @@ import { db } from '../config/firebase';
 import { getBranchById } from './branchService';
 import { getBranchCalendar } from './branchCalendarService';
 import { logActivity } from './activityService';
+import { 
+  storeAppointmentCreated, 
+  storeAppointmentConfirmed, 
+  storeAppointmentCancelled, 
+  storeAppointmentRescheduled,
+  storeAppointmentCompleted,
+  storeAppointmentInService,
+  storeAppointmentTransferred
+} from './notificationService';
 import toast from 'react-hot-toast';
 
 const APPOINTMENTS_COLLECTION = 'appointments';
@@ -312,6 +321,21 @@ export const createAppointment = async (appointmentData, currentUser) => {
 
     const docRef = await addDoc(appointmentsRef, newAppointment);
 
+    // Prepare appointment data for notification
+    const appointmentForNotification = {
+      id: docRef.id,
+      ...newAppointment,
+      appointmentDate: appointmentData.appointmentDate
+    };
+
+    // Send notification to client and stylist(s)
+    try {
+      await storeAppointmentCreated(appointmentForNotification);
+    } catch (error) {
+      console.error('Error sending appointment created notification:', error);
+      // Don't fail appointment creation if notification fails
+    }
+
     // Log activity
     await logActivity({
       performedBy: currentUser.uid,
@@ -407,10 +431,108 @@ export const updateAppointment = async (appointmentId, updates, currentUser) => 
       return acc;
     }, {});
 
+    // Get appointment before update to check status change and stylist changes
+    const appointmentBeforeUpdate = await getAppointmentById(appointmentId);
+    const oldStatus = appointmentBeforeUpdate.status;
+
+    // Check for stylist transfer (when clientType is TR and stylist changes)
+    let stylistTransferDetected = false;
+    let oldStylistId = null;
+    let newStylistId = null;
+    let oldStylistName = null;
+    let newStylistName = null;
+
+    // Check if services array is being updated
+    if (cleanUpdates.services && Array.isArray(cleanUpdates.services)) {
+      // Check each service for TR clientType and stylist changes
+      for (let i = 0; i < cleanUpdates.services.length; i++) {
+        const newService = cleanUpdates.services[i];
+        const oldService = appointmentBeforeUpdate.services?.[i] || appointmentBeforeUpdate.services?.find(s => s.serviceId === newService.serviceId);
+        
+        if (newService.clientType === 'TR' && oldService) {
+          // Check if stylist changed
+          if (oldService.stylistId && newService.stylistId && oldService.stylistId !== newService.stylistId) {
+            stylistTransferDetected = true;
+            oldStylistId = oldService.stylistId;
+            newStylistId = newService.stylistId;
+            oldStylistName = oldService.stylistName || 'Previous Stylist';
+            newStylistName = newService.stylistName || 'New Stylist';
+            break; // Use first service's transfer info
+          }
+        }
+      }
+    }
+
     await updateDoc(appointmentRef, {
       ...cleanUpdates,
       updatedAt: serverTimestamp()
     });
+
+    // Get updated appointment for notifications
+    const updatedAppointment = await getAppointmentById(appointmentId);
+    const newStatus = updatedAppointment.status;
+
+    // Send notification if status changed
+    if (oldStatus !== newStatus && newStatus) {
+      try {
+        const appointmentForNotification = {
+          ...updatedAppointment,
+          appointmentDate: updatedAppointment.appointmentDate
+        };
+
+        switch (newStatus) {
+          case APPOINTMENT_STATUS.CONFIRMED:
+            await storeAppointmentConfirmed(appointmentForNotification);
+            break;
+          case APPOINTMENT_STATUS.CANCELLED:
+            await storeAppointmentCancelled(appointmentForNotification);
+            break;
+          case APPOINTMENT_STATUS.IN_SERVICE:
+            await storeAppointmentInService(appointmentForNotification);
+            break;
+          case APPOINTMENT_STATUS.COMPLETED:
+            await storeAppointmentCompleted(appointmentForNotification);
+            break;
+        }
+      } catch (error) {
+        console.error('Error sending status change notification:', error);
+      }
+    }
+
+    // Send notification if rescheduled (appointmentDate changed)
+    if (updates.appointmentDate) {
+      try {
+        const appointmentForNotification = {
+          ...updatedAppointment,
+          newAppointmentDate: updates.appointmentDate instanceof Date 
+            ? updates.appointmentDate 
+            : updates.appointmentDate.toDate?.() || new Date(updates.appointmentDate),
+          appointmentDate: updatedAppointment.appointmentDate
+        };
+        await storeAppointmentRescheduled(appointmentForNotification);
+      } catch (error) {
+        console.error('Error sending rescheduled notification:', error);
+      }
+    }
+
+    // Send transfer notification if stylist changed and clientType is TR
+    if (stylistTransferDetected && oldStylistId && newStylistId) {
+      try {
+        const transferNotificationData = {
+          ...updatedAppointment,
+          oldStylistId,
+          newStylistId,
+          oldStylistName,
+          newStylistName,
+          appointmentDate: updatedAppointment.appointmentDate
+        };
+        await storeAppointmentTransferred(transferNotificationData);
+        console.log('✅ Transfer notification sent:', { oldStylistId, newStylistId });
+      } catch (error) {
+        console.error('Error sending transfer notification:', error);
+        // Don't fail the update if notification fails
+      }
+    }
 
     // Log activity
     await logActivity({
@@ -452,7 +574,7 @@ export const updateAppointmentStatus = async (appointmentId, status, currentUser
         const updatedServices = appointment.services.map((svc, index) => {
           const assessment = servicesAssessment.find(a => a.serviceId === svc.serviceId) || servicesAssessment[index];
           if (assessment) {
-            return {
+            const updatedService = {
               ...svc,
               clientType: assessment.clientType,
               adjustment: assessment.adjustment || 0,
@@ -460,8 +582,14 @@ export const updateAppointmentStatus = async (appointmentId, status, currentUser
               adjustedPrice: assessment.price || (svc.price || svc.basePrice || 0) + (assessment.adjustment || 0),
               basePrice: assessment.basePrice || svc.price || svc.basePrice || 0
             };
+            // Remove status field if it exists (redundant - appointment has status, not individual services)
+            delete updatedService.status;
+            return updatedService;
           }
-          return svc;
+          // Remove status from existing service if it exists
+          const cleanedService = { ...svc };
+          delete cleanedService.status;
+          return cleanedService;
         });
         updates.services = updatedServices;
       } else if (appointment.serviceName) {
@@ -485,6 +613,35 @@ export const updateAppointmentStatus = async (appointmentId, status, currentUser
     }
     
     await updateDoc(appointmentRef, updates);
+    
+    // Get updated appointment for notifications
+    const updatedAppointment = await getAppointmentById(appointmentId);
+
+    // Send notification based on status change
+    try {
+      const appointmentForNotification = {
+        ...updatedAppointment,
+        appointmentDate: updatedAppointment.appointmentDate
+      };
+
+      switch (status) {
+        case APPOINTMENT_STATUS.CONFIRMED:
+          await storeAppointmentConfirmed(appointmentForNotification);
+          break;
+        case APPOINTMENT_STATUS.CANCELLED:
+          await storeAppointmentCancelled(appointmentForNotification);
+          break;
+        case APPOINTMENT_STATUS.IN_SERVICE:
+          await storeAppointmentInService(appointmentForNotification);
+          break;
+        case APPOINTMENT_STATUS.COMPLETED:
+          await storeAppointmentCompleted(appointmentForNotification);
+          break;
+      }
+    } catch (error) {
+      console.error('Error sending status change notification:', error);
+      // Don't fail status update if notification fails
+    }
 
     // Log activity
     await logActivity({
@@ -535,6 +692,21 @@ export const cancelAppointment = async (appointmentId, reason, currentUser, bypa
       cancelledAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
+
+    // Get updated appointment for notifications
+    const updatedAppointment = await getAppointmentById(appointmentId);
+
+    // Send cancellation notification
+    try {
+      const appointmentForNotification = {
+        ...updatedAppointment,
+        appointmentDate: updatedAppointment.appointmentDate
+      };
+      await storeAppointmentCancelled(appointmentForNotification);
+    } catch (error) {
+      console.error('Error sending cancellation notification:', error);
+      // Don't fail cancellation if notification fails
+    }
 
     // Log activity
     await logActivity({

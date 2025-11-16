@@ -29,6 +29,7 @@ import UsersManagement from '../pages/system-admin/Users';
 import BranchesManagement from '../pages/system-admin/Branches';
 import ServiceTemplates from '../pages/system-admin/ServiceTemplates';
 import SystemAdminActivityLogs from '../pages/system-admin/ActivityLogs';
+import Promotions from '../pages/system-admin/Promotions';
 import SeedServices from '../pages/admin/SeedServices';
 import OperationalManagerDashboard from '../pages/operational-manager/Dashboard';
 import OperationalManagerUsersView from '../pages/operational-manager/UsersView';
@@ -41,13 +42,16 @@ import CalendarManagement from '../pages/branch-manager/CalendarManagement';
 import BranchSettings from '../pages/branch-manager/BranchSettings';
 import BranchManagerAppointments from '../pages/branch-manager/Appointments';
 import BranchManagerBilling from '../pages/branch-manager/Billing';
+import ClientAnalytics from '../pages/branch-manager/ClientAnalytics';
 import ReceptionistDashboard from '../pages/receptionist/Dashboard';
 import ReceptionistAppointments from '../pages/receptionist/Appointments';
 import ReceptionistBilling from '../pages/receptionist/Billing';
+import ReceptionistClients from '../pages/receptionist/Clients';
 import StylistDashboard from '../pages/stylist/Dashboard';
 import StylistAppointments from '../pages/stylist/Appointments';
 import ClientDashboard from '../pages/client/Dashboard';
 import ClientAppointments from '../pages/client/Appointments';
+import ClientProfile from '../pages/client/Profile';
 import Profile from '../pages/common/Profile';
 import InventoryDashboard from '../pages/inventory/Dashboard';
 import InventoryProducts from '../pages/inventory/Products';
@@ -131,9 +135,10 @@ const AppRoutes = () => {
         <Route path="users" element={<UsersManagement />} />
         <Route path="branches" element={<BranchesManagement />} />
         <Route path="service-templates" element={<ServiceTemplates />} />
-        <Route path="seed-services" element={<SeedServices />} />
-        <Route path="activity-logs" element={<SystemAdminActivityLogs />} />
-        <Route path="settings" element={<div className="p-6">Settings - Coming Soon</div>} />
+              <Route path="seed-services" element={<SeedServices />} />
+              <Route path="activity-logs" element={<SystemAdminActivityLogs />} />
+              <Route path="promotions" element={<Promotions />} />
+              <Route path="settings" element={<div className="p-6">Settings - Coming Soon</div>} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -167,9 +172,10 @@ const AppRoutes = () => {
         <Route path="services" element={<ServicesManagement />} />
         <Route path="calendar" element={<CalendarManagement />} />
         <Route path="branch-settings" element={<BranchSettings />} />
-        <Route path="appointments" element={<BranchManagerAppointments />} />
-        <Route path="billing" element={<BranchManagerBilling />} />
-        <Route path="reports" element={<div className="p-6">Reports - Coming Soon</div>} />
+              <Route path="appointments" element={<BranchManagerAppointments />} />
+              <Route path="billing" element={<BranchManagerBilling />} />
+              <Route path="client-analytics" element={<ClientAnalytics />} />
+              <Route path="reports" element={<div className="p-6">Reports - Coming Soon</div>} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -182,10 +188,10 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       >
-        <Route index element={<ReceptionistDashboard />} />
-        <Route path="appointments" element={<ReceptionistAppointments />} />
-        <Route path="clients" element={<div className="p-6">Clients - Coming Soon</div>} />
-        <Route path="billing" element={<ReceptionistBilling />} />
+              <Route index element={<ReceptionistDashboard />} />
+              <Route path="appointments" element={<ReceptionistAppointments />} />
+              <Route path="clients" element={<ReceptionistClients />} />
+              <Route path="billing" element={<ReceptionistBilling />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -214,10 +220,10 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       >
-        <Route index element={<ClientDashboard />} />
-        <Route path="appointments" element={<ClientAppointments />} />
-        <Route path="history" element={<div className="p-6">History - Coming Soon</div>} />
-        <Route path="profile" element={<Profile />} />
+              <Route index element={<ClientDashboard />} />
+              <Route path="appointments" element={<ClientAppointments />} />
+              <Route path="profile" element={<ClientProfile />} />
+              <Route path="settings" element={<Profile />} />
       </Route>
 
       {/* Inventory Controller routes */}

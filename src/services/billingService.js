@@ -19,6 +19,9 @@ import {
 import { db } from '../config/firebase';
 // Inventory service removed - inventory deduction disabled
 import toast from 'react-hot-toast';
+import { earnLoyaltyPoints, redeemLoyaltyPoints } from './loyaltyService';
+import { getClientProfile, updateClientProfile } from './clientService';
+import { getReferralCode } from './referralService';
 
 // Collections
 const BILLS_COLLECTION = 'transactions';
@@ -78,8 +81,6 @@ export const createBill = async (billData, currentUser) => {
       loyaltyPointsUsed: billData.loyaltyPointsUsed || 0,
       tax: billData.tax || 0,
       taxRate: billData.taxRate || 0,
-      serviceCharge: billData.serviceCharge || 0,
-      serviceChargeRate: billData.serviceChargeRate || 0,
       total: billData.total || 0,
       paymentMethod: billData.paymentMethod,
       paymentReference: billData.paymentReference || null,
@@ -95,6 +96,73 @@ export const createBill = async (billData, currentUser) => {
     const docRef = await addDoc(billRef, bill);
     
     // Inventory deduction removed - inventory module has been deleted
+    
+    // CRM Integration: Handle loyalty points
+    if (billData.clientId && billData.branchId) {
+      try {
+        // Redeem loyalty points if used
+        if (billData.loyaltyPointsUsed > 0) {
+          await redeemLoyaltyPoints(
+            billData.clientId,
+            billData.branchId,
+            billData.loyaltyPointsUsed,
+            docRef.id,
+            currentUser
+          );
+        }
+        
+        // Earn loyalty points from transaction (after redemption, so net amount)
+        if (billData.total > 0) {
+          await earnLoyaltyPoints(
+            billData.clientId,
+            billData.branchId,
+            billData.total,
+            docRef.id,
+            currentUser
+          );
+        }
+        
+        // Update client profile stats (visitCount, totalSpent, lastVisit)
+        // This was previously done in addServiceHistory, but we removed service_history as redundant
+        try {
+          const profile = await getClientProfile(billData.clientId);
+          if (profile) {
+            // Count services in this transaction
+            const serviceCount = billData.items?.filter(item => item.type === 'service').length || 0;
+            const serviceTotal = billData.items?.filter(item => item.type === 'service')
+              .reduce((sum, item) => sum + (item.price || 0), 0) || 0;
+            
+            await updateClientProfile(billData.clientId, {
+              visitCount: (profile.visitCount || 0) + serviceCount,
+              lastVisit: Timestamp.now(),
+              totalSpent: (profile.totalSpent || 0) + serviceTotal,
+              updatedAt: Timestamp.now()
+            }, currentUser);
+          }
+        } catch (profileError) {
+          console.error('Error updating client profile stats:', profileError);
+          // Don't fail the bill creation if profile update fails
+        }
+        
+        // Auto-generate referral code for this branch (if client hasn't visited before)
+        // This happens after the transaction is created, so hasVisitedBranch will return true
+        try {
+          if (billData.clientId && billData.branchId) {
+            await getReferralCode(billData.clientId, billData.branchId);
+            // getReferralCode will check if client has visited and generate code if eligible
+            console.log(`✅ Referral code check/generation for client ${billData.clientId} at branch ${billData.branchId}`);
+          }
+        } catch (referralError) {
+          console.error('Error generating referral code:', referralError);
+          // Don't fail the bill creation if referral code generation fails
+        }
+        
+        // Service history removed - redundant, data already in transactions collection
+      } catch (error) {
+        console.error('Error processing CRM integration:', error);
+        // Don't fail the bill creation if CRM integration fails
+      }
+    }
     
     // Log the action
     await logBillingAction({
@@ -348,7 +416,6 @@ export const getDailySalesSummary = async (branchId, date = new Date()) => {
       totalDiscounts: 0,
       totalRefunds: 0,
       totalTax: 0,
-      totalServiceCharge: 0,
       paymentBreakdown: {
         cash: 0,
         card: 0,
@@ -371,7 +438,6 @@ export const getDailySalesSummary = async (branchId, date = new Date()) => {
         summary.totalRevenue += bill.total;
         summary.totalDiscounts += bill.discount;
         summary.totalTax += bill.tax;
-        summary.totalServiceCharge += bill.serviceCharge;
 
         // Payment breakdown
         if (bill.paymentMethod) {
@@ -400,7 +466,7 @@ export const getDailySalesSummary = async (branchId, date = new Date()) => {
  * @returns {Object} - Calculated totals
  */
 export const calculateBillTotals = (billData) => {
-  const { items = [], discount = 0, discountType = 'fixed', taxRate = 0, serviceChargeRate = 0, loyaltyPointsUsed = 0 } = billData;
+  const { items = [], discount = 0, discountType = 'fixed', taxRate = 0, loyaltyPointsUsed = 0 } = billData;
 
   // Calculate subtotal from items
   const subtotal = items.reduce((sum, item) => {
@@ -421,19 +487,16 @@ export const calculateBillTotals = (billData) => {
   // Amount after discount
   const amountAfterDiscount = Math.max(0, subtotal - discountAmount);
 
-  // Calculate service charge
-  const serviceCharge = (amountAfterDiscount * serviceChargeRate) / 100;
-
-  // Calculate tax
-  const tax = ((amountAfterDiscount + serviceCharge) * taxRate) / 100;
+  // Calculate tax (no service charge)
+  const tax = (amountAfterDiscount * taxRate) / 100;
 
   // Calculate total
-  const total = amountAfterDiscount + serviceCharge + tax;
+  const total = amountAfterDiscount + tax;
 
   return {
     subtotal: parseFloat(subtotal.toFixed(2)),
     discount: parseFloat(discountAmount.toFixed(2)),
-    serviceCharge: parseFloat(serviceCharge.toFixed(2)),
+    serviceCharge: 0,
     tax: parseFloat(tax.toFixed(2)),
     total: parseFloat(total.toFixed(2))
   };

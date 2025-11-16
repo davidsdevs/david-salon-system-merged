@@ -188,6 +188,7 @@ const ClientAppointments = () => {
           stylistName: stylist ? `${stylist.firstName} ${stylist.lastName}` : 'Any available',
           duration: service?.duration || 60,
           price: service?.price || 0
+          // Note: No status field - appointment has status, not individual services
         }],
         appointmentDate: bookingData.timeSlot.time,
         duration: service?.duration || 60,

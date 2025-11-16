@@ -4,9 +4,10 @@
  */
 
 import { useState, useEffect } from 'react';
-import { X, DollarSign, Tag, Percent, CreditCard, Wallet, Gift, Receipt, Plus, Trash2, Scissors, Package } from 'lucide-react';
+import { X, DollarSign, Tag, Percent, CreditCard, Wallet, Gift, Receipt, Plus, Trash2, Scissors, Package, Star } from 'lucide-react';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import { PAYMENT_METHODS, calculateBillTotals } from '../../services/billingService';
+import { getLoyaltyPoints } from '../../services/loyaltyService';
 
 const WalkInBillingModal = ({
   isOpen,
@@ -44,6 +45,7 @@ const WalkInBillingModal = ({
   });
 
   const [isNewClient, setIsNewClient] = useState(false);
+  const [clientLoyaltyPoints, setClientLoyaltyPoints] = useState(0);
   
   // Mock products data (similar to old project)
   const [availableProducts] = useState([
@@ -91,7 +93,7 @@ const WalkInBillingModal = ({
     setTotals(calculated);
   }, [formData.items, formData.discount, formData.discountType, formData.loyaltyPointsUsed, taxRate, serviceChargeRate]);
 
-  const handleClientChange = (e) => {
+  const handleClientChange = async (e) => {
     const clientId = e.target.value;
     
     if (clientId === 'new') {
@@ -100,8 +102,10 @@ const WalkInBillingModal = ({
         ...prev,
         clientId: '',
         clientName: '',
-        clientPhone: ''
+        clientPhone: '',
+        loyaltyPointsUsed: 0
       }));
+      setClientLoyaltyPoints(0);
     } else if (clientId) {
       const client = clients.find(c => c.id === clientId);
       setIsNewClient(false);
@@ -109,16 +113,32 @@ const WalkInBillingModal = ({
         ...prev,
         clientId: client.id,
         clientName: `${client.firstName} ${client.lastName}`,
-        clientPhone: client.phoneNumber || ''
+        clientPhone: client.phoneNumber || '',
+        loyaltyPointsUsed: 0
       }));
+      
+      // Fetch loyalty points for selected client (branch-specific)
+      try {
+        if (branchId) {
+          const points = await getLoyaltyPoints(client.id, branchId);
+          setClientLoyaltyPoints(points);
+        } else {
+          setClientLoyaltyPoints(0);
+        }
+      } catch (error) {
+        console.error('Error fetching loyalty points:', error);
+        setClientLoyaltyPoints(0);
+      }
     } else {
       setIsNewClient(false);
       setFormData(prev => ({
         ...prev,
         clientId: '',
         clientName: '',
-        clientPhone: ''
+        clientPhone: '',
+        loyaltyPointsUsed: 0
       }));
+      setClientLoyaltyPoints(0);
     }
   };
 
@@ -538,18 +558,42 @@ const WalkInBillingModal = ({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Loyalty Points (₱)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={formData.loyaltyPointsUsed}
-                    onChange={(e) => setFormData(prev => ({ ...prev, loyaltyPointsUsed: parseInt(e.target.value) || 0 }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                    placeholder="0"
-                  />
-                </div>
+                {/* Loyalty Points (only for registered clients) */}
+                {formData.clientId && !isNewClient && clientLoyaltyPoints > 0 && (
+                  <div className="col-span-2">
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Star className="h-4 w-4 text-yellow-600 fill-yellow-600" />
+                          <label className="block text-sm font-medium text-gray-700">
+                            Loyalty Points Available: <span className="font-bold text-yellow-700">{clientLoyaltyPoints}</span>
+                          </label>
+                        </div>
+                        <span className="text-xs text-gray-500">1 pt = ₱1</span>
+                      </div>
+                      <input
+                        type="number"
+                        min="0"
+                        max={clientLoyaltyPoints}
+                        step="1"
+                        value={formData.loyaltyPointsUsed}
+                        onChange={(e) => {
+                          const points = parseInt(e.target.value) || 0;
+                          if (points <= clientLoyaltyPoints) {
+                            setFormData(prev => ({ ...prev, loyaltyPointsUsed: points }));
+                          }
+                        }}
+                        className="w-full px-3 py-2 border border-yellow-300 rounded-lg focus:ring-2 focus:ring-yellow-500 focus:border-transparent"
+                        placeholder="Enter points to redeem"
+                      />
+                      {formData.loyaltyPointsUsed > 0 && (
+                        <p className="text-xs text-green-600 mt-1">
+                          Discount: ₱{formData.loyaltyPointsUsed}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

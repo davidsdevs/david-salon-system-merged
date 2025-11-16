@@ -4,13 +4,14 @@
  */
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, AlertCircle, CheckCircle } from 'lucide-react';
 import { createUserWithEmailAndPassword, sendEmailVerification, updateProfile } from 'firebase/auth';
 import { doc, setDoc, Timestamp } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import { logActivity } from '../../services/activityService';
 import { sendWelcomeEmail } from '../../services/emailService';
+import { processReferral, validateReferralCode } from '../../services/referralService';
 import { USER_ROLES } from '../../utils/constants';
 import { Card } from '../../components/ui/Card';
 import { Input } from '../../components/ui/Input';
@@ -20,6 +21,10 @@ import Footer from '../../components/landing/Footer';
 
 const Register = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  
+  // Get referral code from URL params (if shared via referral link)
+  const urlReferralCode = searchParams.get('ref');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -32,7 +37,8 @@ const Register = () => {
     email: '',
     phone: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    referralCode: ''
   });
 
   const handleChange = (e) => {
@@ -79,6 +85,24 @@ const Register = () => {
     setError('');
     setSuccess('');
 
+    // Validate referral code BEFORE creating account
+    const referralCodeToProcess = formData.referralCode || urlReferralCode;
+    if (referralCodeToProcess) {
+      try {
+        const validationResult = await validateReferralCode(referralCodeToProcess);
+        if (!validationResult.valid) {
+          setError(validationResult.message || 'Invalid referral code. Please check and try again.');
+          setLoading(false);
+          return;
+        }
+      } catch (validationError) {
+        console.error('Error validating referral code:', validationError);
+        setError('Error validating referral code. Please try again.');
+        setLoading(false);
+        return;
+      }
+    }
+
     try {
       // Create Firebase Auth account
       const userCredential = await createUserWithEmailAndPassword(
@@ -113,6 +137,31 @@ const Register = () => {
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
       });
+
+      // Process referral code if provided (branch ID is automatically determined from referral code)
+      const referralCodeToProcess = formData.referralCode || urlReferralCode;
+      
+      if (referralCodeToProcess) {
+        try {
+          // processReferral will automatically find the branch ID from the referral code
+          const referralResult = await processReferral(
+            user.uid,
+            referralCodeToProcess,
+            null, // branchId will be determined from referral code
+            { uid: user.uid, displayName: fullName }
+          );
+          
+          if (referralResult.success) {
+            console.log('✅ Referral processed successfully:', referralResult);
+          } else {
+            console.warn('⚠️ Referral processing failed:', referralResult.message);
+            // Don't fail registration if referral fails
+          }
+        } catch (referralError) {
+          console.error('Error processing referral:', referralError);
+          // Don't fail registration if referral fails
+        }
+      }
 
       // Send custom welcome email (async, don't wait)
       sendWelcomeEmail({
@@ -327,6 +376,25 @@ const Register = () => {
                   )}
                 </button>
               </div>
+            </div>
+
+            {/* Referral Code Field (Optional) */}
+            <div>
+              <label htmlFor="referralCode" className="block text-sm font-medium text-gray-700 mb-2">
+                Referral Code <span className="text-gray-400 text-xs">(Optional)</span>
+              </label>
+              <Input
+                id="referralCode"
+                name="referralCode"
+                type="text"
+                placeholder="Enter referral code"
+                value={formData.referralCode || urlReferralCode || ''}
+                onChange={handleChange}
+                className="uppercase"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Have a referral code? Enter it here to earn bonus points! The branch will be automatically determined from the code.
+              </p>
             </div>
 
               <div>

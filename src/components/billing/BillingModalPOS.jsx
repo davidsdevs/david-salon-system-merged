@@ -4,9 +4,11 @@
  */
 
 import { useState, useEffect } from 'react';
-import { X, DollarSign, Tag, Search, CreditCard, Wallet, Gift, Scissors, Package, Banknote, Smartphone } from 'lucide-react';
+import { X, DollarSign, Tag, Search, CreditCard, Wallet, Gift, Scissors, Package, Banknote, Smartphone, Star } from 'lucide-react';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import { PAYMENT_METHODS, calculateBillTotals } from '../../services/billingService';
+import { getLoyaltyPoints } from '../../services/loyaltyService';
+import { useAuth } from '../../context/AuthContext';
 import toast from 'react-hot-toast';
 
 const BillingModalPOS = ({
@@ -20,6 +22,7 @@ const BillingModalPOS = ({
   clients = [],
   mode = 'billing' // 'billing' or 'start-service'
 }) => {
+  const { userBranch } = useAuth();
   const [formData, setFormData] = useState({
     items: [], // Each item will have: { id, name, price, basePrice, stylistId, stylistName, clientType, adjustment, adjustmentReason }
     discountType: 'fixed',
@@ -52,6 +55,7 @@ const BillingModalPOS = ({
   const [clientSearch, setClientSearch] = useState('');
   const [showClientList, setShowClientList] = useState(false);
   const [activeTab, setActiveTab] = useState('service'); // 'service' or 'product'
+  const [clientLoyaltyPoints, setClientLoyaltyPoints] = useState(0);
   
   // Mock products data (similar to old project)
   const [availableProducts] = useState([
@@ -100,6 +104,34 @@ const BillingModalPOS = ({
       document.removeEventListener('touchend', handleMouseUp);
     };
   }, [isResizing]);
+
+  // Fetch client loyalty points when appointment/client changes
+  useEffect(() => {
+    const fetchLoyaltyPoints = async () => {
+      // Priority: appointment.clientId (from appointment) > formData.clientId (from walk-in selection)
+      const clientId = appointment?.clientId || formData.clientId;
+      // Get branchId from appointment or userBranch
+      const branchId = appointment?.branchId || userBranch;
+      
+      if (clientId && branchId && isOpen) {
+        try {
+          console.log('🔍 Fetching loyalty points for client:', clientId, 'at branch:', branchId);
+          const points = await getLoyaltyPoints(clientId, branchId);
+          setClientLoyaltyPoints(points);
+          console.log('✅ Fetched loyalty points:', points, 'for client:', clientId, 'at branch:', branchId);
+        } catch (error) {
+          console.error('❌ Error fetching loyalty points:', error);
+          setClientLoyaltyPoints(0);
+        }
+      } else {
+        setClientLoyaltyPoints(0);
+      }
+    };
+
+    if (isOpen) {
+      fetchLoyaltyPoints();
+    }
+  }, [isOpen, appointment?.clientId, appointment?.branchId, formData.clientId, userBranch]);
 
   useEffect(() => {
     if (isOpen) {
@@ -190,13 +222,13 @@ const BillingModalPOS = ({
         // Combine services and products
         const items = [...serviceItems, ...productItems];
 
-        // Load billing fields (discount, tax, etc.) if they exist
+        // Load billing fields (discount, tax rate, etc.) if they exist
         setFormData(prev => ({
           ...prev,
           items,
           discount: appointment.discount !== undefined ? String(appointment.discount) : prev.discount,
           discountType: appointment.discountType || prev.discountType,
-          tax: appointment.tax !== undefined ? String(appointment.tax) : prev.tax
+          tax: appointment.taxRate !== undefined ? String(appointment.taxRate) : (appointment.tax !== undefined ? String(appointment.tax) : prev.tax) // Support both taxRate and tax for backward compatibility
         }));
       }
     } else {
@@ -283,10 +315,24 @@ const BillingModalPOS = ({
 
   const handleUpdateItem = (index, field, value) => {
     const updatedItems = [...formData.items];
+    const currentItem = updatedItems[index];
+    
     if (field === 'stylistId') {
       const stylist = stylists.find(s => s.id === value);
       updatedItems[index].stylistId = value;
       updatedItems[index].stylistName = stylist ? `${stylist.firstName} ${stylist.lastName}` : '';
+    } else if (field === 'clientType') {
+      // When changing clientType from TR to X or R, clear stylist selection
+      const wasTR = currentItem.clientType === 'TR' || currentItem.clientType === 'TR-Transfer';
+      const isNowXorR = value === 'X' || value === 'R';
+      
+      updatedItems[index][field] = value;
+      
+      // If changing from TR to X/R, clear stylist (stylist should only be changeable for TR)
+      if (wasTR && isNowXorR && currentItem.type === 'service') {
+        updatedItems[index].stylistId = '';
+        updatedItems[index].stylistName = '';
+      }
     } else if (field === 'adjustment') {
       updatedItems[index].adjustment = parseFloat(value) || 0;
       // Recalculate final price: basePrice + adjustment
@@ -324,7 +370,7 @@ const BillingModalPOS = ({
   });
 
   // Handle client selection from search list
-  const handleSelectClient = (client) => {
+  const handleSelectClient = async (client) => {
     setMatchedClient(client);
     setClientSearch(`${client.firstName} ${client.lastName}`);
     setShowClientList(false);
@@ -335,6 +381,22 @@ const BillingModalPOS = ({
       clientPhone: client.phoneNumber || client.phone || '',
       clientEmail: client.email || ''
     }));
+    
+    // Fetch loyalty points for selected client (branch-specific)
+    if (client.id) {
+      try {
+        const branchId = appointment?.branchId || userBranch;
+        if (branchId) {
+          const points = await getLoyaltyPoints(client.id, branchId);
+          setClientLoyaltyPoints(points);
+        } else {
+          setClientLoyaltyPoints(0);
+        }
+      } catch (error) {
+        console.error('Error fetching loyalty points:', error);
+        setClientLoyaltyPoints(0);
+      }
+    }
   };
 
   // Handle client name input change
@@ -404,6 +466,15 @@ const BillingModalPOS = ({
       return;
     }
 
+    // Validate stylist selection for TR (Transfer) client type
+    const transferServices = formData.items.filter(item => item.type === 'service' && item.clientType === 'TR');
+    for (const service of transferServices) {
+      if (!service.stylistId || service.stylistId.trim() === '') {
+        toast.error(`Stylist is required for Transfer (TR) client type. Please select a stylist for "${service.name}".`);
+        return;
+      }
+    }
+
     // Validate amount received for cash payments (only in billing mode)
     if (mode === 'billing' && formData.paymentMethod === PAYMENT_METHODS.CASH) {
       const amountReceived = parseFloat(formData.amountReceived) || 0;
@@ -427,10 +498,11 @@ const BillingModalPOS = ({
       stylistName: appointment?.stylistName || formData.items[0]?.stylistName,
       items: formData.items,
       subtotal: totals.subtotal,
-      discount: totals.discount,
+      discount: parseFloat(formData.discount) || 0, // Store discount amount/percentage (not computed)
       discountType: formData.discountType,
       loyaltyPointsUsed: parseInt(formData.loyaltyPointsUsed) || 0,
-      tax: totals.tax,
+      tax: totals.tax, // Computed tax amount (for billing)
+      taxRate: parseFloat(formData.tax) || 0, // Tax rate (for storing in appointment)
       total: totals.total,
       paymentMethod: formData.paymentMethod,
       paymentReference: formData.paymentReference,
@@ -851,26 +923,55 @@ const BillingModalPOS = ({
                           </div>
                         )}
 
-                        {/* Stylist Selection (only for services) */}
+                        {/* Stylist Selection (only for services, and only changeable for TR) */}
                         {item.type === 'service' && (
-                          <select
-                            value={item.stylistId || ''}
-                            onChange={(e) => {
-                              const stylist = stylists.find(s => s.id === e.target.value);
-                              handleUpdateItem(index, 'stylistId', e.target.value);
-                              if (stylist) {
-                                handleUpdateItem(index, 'stylistName', `${stylist.firstName} ${stylist.lastName}`);
-                              }
-                            }}
-                            className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-[#2D1B4E] focus:border-transparent mb-2"
-                          >
-                            <option value="">Select Stylist</option>
-                            {stylists.map(stylist => (
-                              <option key={stylist.id} value={stylist.id}>
-                                {stylist.firstName} {stylist.lastName}
-                              </option>
-                            ))}
-                          </select>
+                          <div className="mb-2">
+                            <label className="text-xs text-gray-500 mb-1 block">
+                              Stylist {item.clientType === 'TR' && <span className="text-red-500">*</span>}
+                            </label>
+                            {item.clientType === 'TR' ? (
+                              // TR: Allow stylist change
+                              <>
+                                <select
+                                  value={item.stylistId || ''}
+                                  onChange={(e) => {
+                                    const stylist = stylists.find(s => s.id === e.target.value);
+                                    handleUpdateItem(index, 'stylistId', e.target.value);
+                                    if (stylist) {
+                                      handleUpdateItem(index, 'stylistName', `${stylist.firstName} ${stylist.lastName}`);
+                                    } else {
+                                      handleUpdateItem(index, 'stylistName', '');
+                                    }
+                                  }}
+                                  required
+                                  className={`w-full px-2 py-1 text-xs border rounded focus:ring-1 focus:ring-[#2D1B4E] focus:border-transparent ${
+                                    !item.stylistId 
+                                      ? 'border-red-300 bg-red-50' 
+                                      : 'border-gray-300'
+                                  }`}
+                                >
+                                  <option value="">Select Stylist</option>
+                                  {stylists.map(stylist => (
+                                    <option key={stylist.id} value={stylist.id}>
+                                      {stylist.firstName} {stylist.lastName}
+                                    </option>
+                                  ))}
+                                </select>
+                                {!item.stylistId && (
+                                  <p className="text-xs text-red-500 mt-1">Stylist is required for Transfer</p>
+                                )}
+                              </>
+                            ) : (
+                              // X or R: Show stylist as read-only (from appointment)
+                              <input
+                                type="text"
+                                value={item.stylistName || 'Any available'}
+                                readOnly
+                                disabled
+                                className="w-full px-2 py-1 text-xs border border-gray-300 rounded bg-gray-100 text-gray-600 cursor-not-allowed"
+                              />
+                            )}
+                          </div>
                         )}
 
                         {/* Client Type (only for services) */}
@@ -969,6 +1070,41 @@ const BillingModalPOS = ({
               {/* Fixed Bottom Section */}
               <div className="border-t bg-white p-3 flex-shrink-0">
                 <div className="space-y-2 mb-3">
+                  {/* Loyalty Points (only for registered clients) */}
+                  {(appointment?.clientId || formData.clientId) && clientLoyaltyPoints > 0 && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-2 mb-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <Star className="h-4 w-4 text-yellow-600 fill-yellow-600" />
+                          <label className="block text-xs font-medium text-gray-700">
+                            Loyalty Points Available: <span className="font-bold text-yellow-700">{clientLoyaltyPoints}</span>
+                          </label>
+                        </div>
+                        <span className="text-xs text-gray-500">1 pt = ₱1</span>
+                      </div>
+                      <input
+                        type="number"
+                        min="0"
+                        max={clientLoyaltyPoints}
+                        step="1"
+                        value={formData.loyaltyPointsUsed || ''}
+                        onChange={(e) => {
+                          const points = parseInt(e.target.value) || 0;
+                          if (points <= clientLoyaltyPoints) {
+                            setFormData(prev => ({ ...prev, loyaltyPointsUsed: points.toString() }));
+                          }
+                        }}
+                        className="w-full px-2 py-1 text-sm border border-yellow-300 rounded focus:ring-1 focus:ring-yellow-500 focus:border-transparent"
+                        placeholder="Enter points to redeem"
+                      />
+                      {formData.loyaltyPointsUsed && parseInt(formData.loyaltyPointsUsed) > 0 && (
+                        <p className="text-xs text-green-600 mt-1">
+                          Discount: ₱{parseInt(formData.loyaltyPointsUsed) || 0}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Discount and Tax - Always editable */}
                   <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -996,8 +1132,8 @@ const BillingModalPOS = ({
                         className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-[#2D1B4E] focus:border-transparent"
                         placeholder="0"
                       />
+                    </div>
                   </div>
-                </div>
 
                 {/* Payment Method - Only show in billing mode */}
                 {mode === 'billing' && (

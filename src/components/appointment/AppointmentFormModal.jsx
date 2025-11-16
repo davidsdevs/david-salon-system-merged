@@ -235,11 +235,12 @@ const AppointmentFormModal = ({
     const selectedBranch = branches && branches.filter(b => b && b.id).find(b => b.id === formData.branchId);
     
     // Enrich services with full details
+    // Remove status field if it exists (redundant - appointment has status, not individual services)
     const enrichedServices = formData.services.map(serviceObj => {
       const service = services.find(s => s.id === serviceObj.serviceId);
       const stylist = stylists && stylists.find(s => s.id === serviceObj.stylistId);
       
-      return {
+      const enrichedService = {
         serviceId: serviceObj.serviceId,
         serviceName: service?.name || '',
         duration: service?.duration || 0,
@@ -247,6 +248,9 @@ const AppointmentFormModal = ({
         stylistId: serviceObj.stylistId || null,
         stylistName: stylist ? `${stylist.firstName} ${stylist.lastName}` : 'Any available'
       };
+      // Explicitly remove status if it exists
+      delete enrichedService.status;
+      return enrichedService;
     });
     
     // Calculate totals
