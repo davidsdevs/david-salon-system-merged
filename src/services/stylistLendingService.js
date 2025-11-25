@@ -113,7 +113,9 @@ export const getLendingRequests = async (branchId) => {
         startDate: doc.data().startDate?.toDate(),
         endDate: doc.data().endDate?.toDate(),
         requestedAt: doc.data().requestedAt?.toDate(),
-        approvedAt: doc.data().approvedAt?.toDate()
+        approvedAt: doc.data().approvedAt?.toDate(),
+        rejectedAt: doc.data().rejectedAt?.toDate(),
+        cancelledAt: doc.data().cancelledAt?.toDate()
       });
     });
 
@@ -127,7 +129,9 @@ export const getLendingRequests = async (branchId) => {
           startDate: doc.data().startDate?.toDate(),
           endDate: doc.data().endDate?.toDate(),
           requestedAt: doc.data().requestedAt?.toDate(),
-          approvedAt: doc.data().approvedAt?.toDate()
+          approvedAt: doc.data().approvedAt?.toDate(),
+          rejectedAt: doc.data().rejectedAt?.toDate(),
+          cancelledAt: doc.data().cancelledAt?.toDate()
         });
       }
     });

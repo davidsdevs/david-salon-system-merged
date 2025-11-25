@@ -122,3 +122,7 @@ const StylistLogin = () => {
 
 export default StylistLogin;
 
+
+
+
+

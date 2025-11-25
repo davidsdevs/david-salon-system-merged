@@ -691,17 +691,17 @@ const StaffLending = () => {
         </div>
       </div>
 
-      {/* Outgoing Requests - Only show pending, rejected, and cancelled (hide approved) */}
+      {/* Outgoing Requests - Show all statuses except active/completed */}
       {(() => {
-        // Filter outgoing requests, excluding approved ones
+        // Filter outgoing requests, excluding active and completed (they're in a different section)
         const filteredOutgoing = filteredRequests.filter(r => 
-          r.type === 'outgoing' && r.status !== 'approved'
+          r.type === 'outgoing' && r.status !== 'active' && r.status !== 'completed'
         );
         return filteredOutgoing.length > 0 && (
           <div>
             <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
               <ArrowLeft className="w-5 h-5 text-purple-600" />
-              Outgoing Requests (Your requests for help - waiting for approval)
+              Outgoing Requests (Your requests for help)
               <span className="ml-2 px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs font-medium">
                 {filteredOutgoing.length}
               </span>
@@ -802,6 +802,292 @@ const StaffLending = () => {
               <div className="mt-4 text-center text-sm text-gray-500">
                 Showing first 50 of {filteredOutgoing.length} outgoing requests. Use filters to narrow down results.
               </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Accepted/Approved Requests Section */}
+      {(() => {
+        const approvedRequests = filteredRequests.filter(r => 
+          r.status === 'approved' || r.status === 'active'
+        );
+        return approvedRequests.length > 0 && (
+          <div className="space-y-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <CheckCircle className="w-5 h-5 text-green-600" />
+              Accepted/Approved Requests
+              <span className="ml-2 px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
+                {approvedRequests.length}
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Accepted Incoming Requests */}
+              {(() => {
+                const approvedIncoming = approvedRequests.filter(r => r.type === 'incoming');
+                return approvedIncoming.length > 0 && (
+                  <div>
+                    <h3 className="text-md font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <ArrowRight className="w-4 h-4 text-blue-600" />
+                      Incoming Accepted ({approvedIncoming.length})
+                    </h3>
+                    <div className="space-y-3">
+                      {approvedIncoming.slice(0, 10).map((request) => {
+                        const requestingBranch = branchCache[request.toBranchId];
+                        const stylist = stylistCache[request.stylistId];
+                        
+                        return (
+                          <div key={request.id} className="bg-green-50 rounded-lg border border-green-200 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-2">
+                                  {stylist && (
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <User className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate">
+                                          {getFullName(stylist)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <span className={`ml-auto px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${getStatusBadge(request.status)}`}>
+                                    {getStatusIcon(request.status)}
+                                    {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                                  </span>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-xs text-gray-600">
+                                    <Building2 className="w-3 h-3 inline mr-1" />
+                                    {requestingBranch?.branchName || requestingBranch?.name || 'Unknown Branch'}
+                                  </p>
+                                  {request.approvedByName && (
+                                    <p className="text-xs text-gray-600">
+                                      Approved by: {request.approvedByName}
+                                    </p>
+                                  )}
+                                  {request.approvedAt && (
+                                    <p className="text-xs text-gray-500">
+                                      {formatDate(request.approvedAt, 'MMM dd, yyyy HH:mm')}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Accepted Outgoing Requests */}
+              {(() => {
+                const approvedOutgoing = approvedRequests.filter(r => r.type === 'outgoing');
+                return approvedOutgoing.length > 0 && (
+                  <div>
+                    <h3 className="text-md font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <ArrowLeft className="w-4 h-4 text-purple-600" />
+                      Outgoing Accepted ({approvedOutgoing.length})
+                    </h3>
+                    <div className="space-y-3">
+                      {approvedOutgoing.slice(0, 10).map((request) => {
+                        const providingBranch = branchCache[request.fromBranchId];
+                        const stylist = stylistCache[request.stylistId];
+                        
+                        return (
+                          <div key={request.id} className="bg-green-50 rounded-lg border border-green-200 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-2">
+                                  {stylist && (
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <User className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate">
+                                          {getFullName(stylist)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <span className={`ml-auto px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${getStatusBadge(request.status)}`}>
+                                    {getStatusIcon(request.status)}
+                                    {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                                  </span>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-xs text-gray-600">
+                                    <Building2 className="w-3 h-3 inline mr-1" />
+                                    {providingBranch?.branchName || providingBranch?.name || 'Unknown Branch'}
+                                  </p>
+                                  {request.approvedByName && (
+                                    <p className="text-xs text-gray-600">
+                                      Approved by: {request.approvedByName}
+                                    </p>
+                                  )}
+                                  {request.approvedAt && (
+                                    <p className="text-xs text-gray-500">
+                                      {formatDate(request.approvedAt, 'MMM dd, yyyy HH:mm')}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            {approvedRequests.length > 10 && (
+              <p className="text-sm text-gray-500 text-center mt-2">
+                Showing first 10 of {approvedRequests.length} accepted requests. Use filters to see more.
+              </p>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* Rejected Requests Section */}
+      {(() => {
+        const rejectedRequests = filteredRequests.filter(r => r.status === 'rejected');
+        return rejectedRequests.length > 0 && (
+          <div className="space-y-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <XCircle className="w-5 h-5 text-red-600" />
+              Rejected Requests
+              <span className="ml-2 px-2 py-1 bg-red-100 text-red-800 rounded-full text-xs font-medium">
+                {rejectedRequests.length}
+              </span>
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Rejected Incoming Requests */}
+              {(() => {
+                const rejectedIncoming = rejectedRequests.filter(r => r.type === 'incoming');
+                return rejectedIncoming.length > 0 && (
+                  <div>
+                    <h3 className="text-md font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <ArrowRight className="w-4 h-4 text-blue-600" />
+                      Incoming Rejected ({rejectedIncoming.length})
+                    </h3>
+                    <div className="space-y-3">
+                      {rejectedIncoming.slice(0, 10).map((request) => {
+                        const requestingBranch = branchCache[request.toBranchId];
+                        const stylist = stylistCache[request.stylistId];
+                        
+                        return (
+                          <div key={request.id} className="bg-red-50 rounded-lg border border-red-200 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-2">
+                                  {stylist && (
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <User className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate">
+                                          {getFullName(stylist)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <span className={`ml-auto px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${getStatusBadge(request.status)}`}>
+                                    {getStatusIcon(request.status)}
+                                    Rejected
+                                  </span>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-xs text-gray-600">
+                                    <Building2 className="w-3 h-3 inline mr-1" />
+                                    {requestingBranch?.branchName || requestingBranch?.name || 'Unknown Branch'}
+                                  </p>
+                                  {request.rejectionReason && (
+                                    <p className="text-xs text-red-700 mt-1">
+                                      Reason: {request.rejectionReason}
+                                    </p>
+                                  )}
+                                  {request.rejectedAt && (
+                                    <p className="text-xs text-gray-500">
+                                      {formatDate(request.rejectedAt, 'MMM dd, yyyy HH:mm')}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Rejected Outgoing Requests */}
+              {(() => {
+                const rejectedOutgoing = rejectedRequests.filter(r => r.type === 'outgoing');
+                return rejectedOutgoing.length > 0 && (
+                  <div>
+                    <h3 className="text-md font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                      <ArrowLeft className="w-4 h-4 text-purple-600" />
+                      Outgoing Rejected ({rejectedOutgoing.length})
+                    </h3>
+                    <div className="space-y-3">
+                      {rejectedOutgoing.slice(0, 10).map((request) => {
+                        const providingBranch = branchCache[request.fromBranchId];
+                        const stylist = stylistCache[request.stylistId];
+                        
+                        return (
+                          <div key={request.id} className="bg-red-50 rounded-lg border border-red-200 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-2">
+                                  {stylist && (
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <User className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium text-gray-900 truncate">
+                                          {getFullName(stylist)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <span className={`ml-auto px-2 py-1 rounded-full text-xs font-medium flex items-center gap-1 ${getStatusBadge(request.status)}`}>
+                                    {getStatusIcon(request.status)}
+                                    Rejected
+                                  </span>
+                                </div>
+                                <div className="space-y-1">
+                                  <p className="text-xs text-gray-600">
+                                    <Building2 className="w-3 h-3 inline mr-1" />
+                                    {providingBranch?.branchName || providingBranch?.name || 'Unknown Branch'}
+                                  </p>
+                                  {request.rejectionReason && (
+                                    <p className="text-xs text-red-700 mt-1">
+                                      Reason: {request.rejectionReason}
+                                    </p>
+                                  )}
+                                  {request.rejectedAt && (
+                                    <p className="text-xs text-gray-500">
+                                      {formatDate(request.rejectedAt, 'MMM dd, yyyy HH:mm')}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+            {rejectedRequests.length > 10 && (
+              <p className="text-sm text-gray-500 text-center mt-2">
+                Showing first 10 of {rejectedRequests.length} rejected requests. Use filters to see more.
+              </p>
             )}
           </div>
         );

@@ -15,7 +15,7 @@ import {
   CheckCircle,
   XCircle,
   AlertTriangle,
-  DollarSign,
+  Banknote,
   Calendar,
   Building,
   FileText,
@@ -30,7 +30,10 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  X
+  X,
+  Plus,
+  Trash2,
+  Receipt
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -72,6 +75,9 @@ const Deposits = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedDeposit, setSelectedDeposit] = useState(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
+  
+  // Expenses/Justifications state
+  const [expenses, setExpenses] = useState([]);
 
   // Load deposits
   const loadDeposits = async () => {
@@ -431,15 +437,39 @@ const Deposits = () => {
       }
       const receiptImageUrl = uploadResult.url;
 
-      // Calculate difference
+      // Upload expense receipt images
+      const expensesWithUrls = await Promise.all(expenses.map(async (expense) => {
+        let receiptImageUrl = null;
+        let receiptImagePath = null;
+        
+        if (expense.receiptImage) {
+          const uploadResult = await cloudinaryService.uploadImage(expense.receiptImage, 'deposits/expenses');
+          if (uploadResult.success) {
+            receiptImageUrl = uploadResult.url;
+            receiptImagePath = uploadResult.publicId || '';
+          }
+        }
+        
+        return {
+          amount: parseFloat(expense.amount) || 0,
+          description: expense.description || '',
+          receiptImageUrl: receiptImageUrl,
+          receiptImagePath: receiptImagePath,
+          createdAt: new Date().toISOString()
+        };
+      }));
+
+      // Calculate difference (accounting for expenses)
       const depositAmount = parseFloat(amount);
-      const difference = depositAmount - dailySalesTotal;
+      const totalExpensesAmount = expensesWithUrls.reduce((sum, exp) => sum + exp.amount, 0);
+      const adjustedSalesTotal = dailySalesTotal - totalExpensesAmount;
+      const difference = depositAmount - adjustedSalesTotal;
       
       // Check for anomalies
       const anomalyCheck = checkAnomalies(
         ocrResult?.rawText || ocrResult?.extractedText || null,
         depositAmount,
-        dailySalesTotal
+        adjustedSalesTotal
       );
       
       // Determine validation status
@@ -462,6 +492,8 @@ const Deposits = () => {
         ocrExtractedAmount: ocrResult?.amount || null,
         ocrConfidence: ocrResult?.confidence || null,
         dailySalesTotal: dailySalesTotal,
+        totalExpenses: totalExpensesAmount,
+        expenses: expensesWithUrls,
         difference: difference,
         validationStatus: validationStatus,
         hasAnomaly: anomalyCheck.hasAnomaly,
@@ -504,8 +536,66 @@ const Deposits = () => {
     setNotes('');
     setOcrResult(null);
     setValidationResult(null);
+    setExpenses([]);
     setError(null);
   };
+
+  // Add expense
+  const addExpense = () => {
+    setExpenses([...expenses, {
+      id: Date.now().toString(),
+      amount: '',
+      description: '',
+      receiptImage: null,
+      receiptPreview: null,
+      receiptImageUrl: null
+    }]);
+  };
+
+  // Remove expense
+  const removeExpense = (expenseId) => {
+    setExpenses(expenses.filter(exp => exp.id !== expenseId));
+  };
+
+  // Update expense field
+  const updateExpense = (expenseId, field, value) => {
+    setExpenses(expenses.map(exp => 
+      exp.id === expenseId ? { ...exp, [field]: value } : exp
+    ));
+  };
+
+  // Handle expense image upload
+  const handleExpenseImageUpload = (expenseId, e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    if (!file.type.startsWith('image/')) {
+      setError('Please upload an image file');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image size should be less than 5MB');
+      return;
+    }
+
+    // Create preview
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      updateExpense(expenseId, 'receiptPreview', reader.result);
+      updateExpense(expenseId, 'receiptImage', file);
+    };
+    reader.readAsDataURL(file);
+    setError(null);
+  };
+
+  // Calculate total expenses
+  const totalExpenses = expenses.reduce((sum, exp) => {
+    return sum + (parseFloat(exp.amount) || 0);
+  }, 0);
+
+  // Calculate expected deposit (Sales - Expenses)
+  const expectedDepositAmount = Math.max(0, dailySalesTotal - totalExpenses);
 
   // Get status color
   const getStatusColor = (status) => {
@@ -701,7 +791,7 @@ const Deposits = () => {
               <p className="text-sm font-medium text-gray-600">Total Deposits</p>
               <p className="text-2xl font-bold text-gray-900">{deposits.length}</p>
             </div>
-            <DollarSign className="h-8 w-8 text-blue-600" />
+            <Banknote className="h-8 w-8 text-blue-600" />
           </div>
         </Card>
           
@@ -763,6 +853,7 @@ const Deposits = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Daily Sales</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expenses</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Difference</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Validation</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Anomaly</th>
@@ -773,10 +864,10 @@ const Deposits = () => {
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredDeposits.length === 0 ? (
                   <tr>
-                    <td colSpan="8" className="px-6 py-12 text-center">
+                    <td colSpan="9" className="px-6 py-12 text-center">
                       <div className="flex flex-col items-center justify-center space-y-3">
                         <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-                          <DollarSign className="h-8 w-8 text-gray-400" />
+                          <Banknote className="h-8 w-8 text-gray-400" />
                         </div>
                         <div>
                           <p className="text-lg font-semibold text-gray-900">
@@ -802,6 +893,20 @@ const Deposits = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         ₱{(deposit.dailySalesTotal || 0).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {deposit.totalExpenses > 0 ? (
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-orange-700">
+                              ₱{(deposit.totalExpenses || 0).toLocaleString()}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              {deposit.expenses?.length || 0} item(s)
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-gray-400">₱0.00</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`font-medium ${
@@ -901,7 +1006,7 @@ const Deposits = () => {
                       <p className="text-xs text-gray-500 mt-1 italic">No transactions found for this date</p>
                     )}
                   </div>
-                  <DollarSign className={`h-12 w-12 ${dailySalesTotal > 0 ? 'text-blue-200' : 'text-gray-400'}`} />
+                  <Banknote className={`h-12 w-12 ${dailySalesTotal > 0 ? 'text-blue-200' : 'text-gray-400'}`} />
                 </div>
               </Card>
 
@@ -1008,6 +1113,32 @@ const Deposits = () => {
                       </div>
                     )}
 
+                    {/* Total Expenses */}
+                    {totalExpenses > 0 && (
+                      <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-orange-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-orange-600"></div>
+                          <span className="font-medium text-gray-700">Total Expenses</span>
+                        </div>
+                        <span className="text-xl font-bold text-orange-600">
+                          ₱{totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Expected Deposit (Sales - Expenses) */}
+                    {totalExpenses > 0 && (
+                      <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-blue-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-blue-600"></div>
+                          <span className="font-medium text-gray-700">Expected Deposit (Sales - Expenses)</span>
+                        </div>
+                        <span className="text-xl font-bold text-blue-600">
+                          ₱{expectedDepositAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+
                     {/* Manual Deposit Amount */}
                     {amount && (
                       <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-green-200">
@@ -1021,9 +1152,9 @@ const Deposits = () => {
                           </span>
                           {dailySalesTotal > 0 && (
                             <span className={`text-sm font-medium ${
-                              Math.abs(parseFloat(amount) - dailySalesTotal) <= 1 ? 'text-green-600' : 'text-red-600'
+                              Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 ? 'text-green-600' : 'text-red-600'
                             }`}>
-                              ({parseFloat(amount) >= dailySalesTotal ? '+' : ''}₱{(parseFloat(amount) - dailySalesTotal).toFixed(2)})
+                              ({parseFloat(amount) >= expectedDepositAmount ? '+' : ''}₱{Math.abs(parseFloat(amount) - expectedDepositAmount).toFixed(2)})
                             </span>
                           )}
                         </div>
@@ -1033,27 +1164,27 @@ const Deposits = () => {
                     {/* Match Status Display */}
                     {amount && dailySalesTotal > 0 && (
                       <div className={`flex items-center justify-between p-4 rounded-lg border-2 ${
-                        Math.abs(parseFloat(amount) - dailySalesTotal) <= 1 
+                        Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 
                           ? 'bg-green-50 border-green-500' 
                           : 'bg-red-50 border-red-500'
                       }`}>
                         <div className="flex items-center gap-3">
-                          {Math.abs(parseFloat(amount) - dailySalesTotal) <= 1 ? (
+                          {Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 ? (
                             <CheckCircle className="h-6 w-6 text-green-600" />
                           ) : (
                             <AlertTriangle className="h-6 w-6 text-red-600" />
                           )}
                           <div>
                             <p className={`text-lg font-bold ${
-                              Math.abs(parseFloat(amount) - dailySalesTotal) <= 1 ? 'text-green-800' : 'text-red-800'
+                              Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 ? 'text-green-800' : 'text-red-800'
                             }`}>
-                              {Math.abs(parseFloat(amount) - dailySalesTotal) <= 1 
+                              {Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 
                                 ? '✓ Amounts Match' 
                                 : '✗ Amounts Do Not Match'}
                             </p>
-                            {Math.abs(parseFloat(amount) - dailySalesTotal) > 1 && (
+                            {Math.abs(parseFloat(amount) - expectedDepositAmount) > 1 && (
                               <p className="text-sm text-red-700 mt-1">
-                                Difference: ₱{Math.abs(parseFloat(amount) - dailySalesTotal).toFixed(2)}
+                                Difference: ₱{Math.abs(parseFloat(amount) - expectedDepositAmount).toFixed(2)}
                               </p>
                             )}
                           </div>
@@ -1063,7 +1194,19 @@ const Deposits = () => {
                           <p className="text-sm font-semibold text-gray-800">
                             ₱{dailySalesTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </p>
-                          <p className="text-xs text-gray-600 mt-1 mb-1">Deposit</p>
+                          {totalExpenses > 0 && (
+                            <>
+                              <p className="text-xs text-gray-600 mt-1 mb-1">Less: Expenses</p>
+                              <p className="text-sm font-semibold text-orange-700">
+                                -₱{totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </p>
+                            </>
+                          )}
+                          <p className="text-xs text-gray-600 mt-1 mb-1">Expected Deposit</p>
+                          <p className="text-sm font-semibold text-blue-700">
+                            ₱{expectedDepositAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-xs text-gray-600 mt-1 mb-1">Actual Deposit</p>
                           <p className="text-sm font-semibold text-gray-800">
                             ₱{parseFloat(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </p>
@@ -1087,11 +1230,16 @@ const Deposits = () => {
                               </span>
                             </p>
                           )}
+                          {totalExpenses > 0 && (
+                            <p className="text-xs text-gray-600">
+                              Expenses deducted: <span className="font-medium text-orange-600">₱{totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            </p>
+                          )}
                           <p className="text-xs text-gray-600">
-                            Deposit vs Sales: <span className={`font-medium ${
-                              Math.abs(parseFloat(amount) - dailySalesTotal) <= 1 ? 'text-green-600' : 'text-red-600'
+                            Deposit vs Expected: <span className={`font-medium ${
+                              Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 ? 'text-green-600' : 'text-red-600'
                             }`}>
-                              {Math.abs(parseFloat(amount) - dailySalesTotal) <= 1 ? '✓ Match' : `✗ Difference: ₱${Math.abs(parseFloat(amount) - dailySalesTotal).toFixed(2)}`}
+                              {Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 ? '✓ Match' : `✗ Difference: ₱${Math.abs(parseFloat(amount) - expectedDepositAmount).toFixed(2)}`}
                             </span>
                           </p>
                         </div>
@@ -1186,6 +1334,129 @@ const Deposits = () => {
                 </div>
               </div>
 
+              {/* Expenses/Justifications Section */}
+              <Card className="p-6 bg-orange-50 border-2 border-orange-200">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Expenses & Justifications</h3>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Add expenses (e.g., maintenance, repairs) to justify why the deposit amount differs from sales
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={addExpense}
+                    className="flex items-center gap-2 bg-white hover:bg-orange-100"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add Expense
+                  </Button>
+                </div>
+
+                {expenses.length > 0 && (
+                  <div className="space-y-4 mb-4">
+                    {expenses.map((expense, index) => (
+                      <Card key={expense.id} className="p-4 bg-white border border-orange-200">
+                        <div className="flex items-start justify-between mb-3">
+                          <h4 className="font-semibold text-gray-900">Expense #{index + 1}</h4>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeExpense(expense.id)}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Amount <span className="text-red-500">*</span>
+                            </label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={expense.amount}
+                              onChange={(e) => updateExpense(expense.id, 'amount', e.target.value)}
+                              placeholder="0.00"
+                              min="0"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              Description <span className="text-red-500">*</span>
+                            </label>
+                            <Input
+                              type="text"
+                              value={expense.description}
+                              onChange={(e) => updateExpense(expense.id, 'description', e.target.value)}
+                              placeholder="e.g., Maintenance repair, Supplies, etc."
+                              required
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Receipt Image (Optional)
+                          </label>
+                          <label className="cursor-pointer">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleExpenseImageUpload(expense.id, e)}
+                              className="hidden"
+                            />
+                            <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-orange-400 transition-colors">
+                              {expense.receiptPreview ? (
+                                <div>
+                                  <img src={expense.receiptPreview} alt="Receipt preview" className="max-h-32 mx-auto rounded mb-2" />
+                                  <p className="text-xs text-gray-600">Click to change image</p>
+                                </div>
+                              ) : (
+                                <div>
+                                  <Receipt className="h-6 w-6 text-gray-400 mx-auto mb-2" />
+                                  <p className="text-sm text-gray-600">Click to upload receipt</p>
+                                  <p className="text-xs text-gray-500 mt-1">PNG, JPG up to 5MB</p>
+                                </div>
+                              )}
+                            </div>
+                          </label>
+                        </div>
+                      </Card>
+                    ))}
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700">Total Expenses:</span>
+                        <span className="text-lg font-bold text-blue-700">₱{totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                      {dailySalesTotal > 0 && (
+                        <div className="mt-2 pt-2 border-t border-blue-300">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-gray-600">Daily Sales:</span>
+                            <span className="text-sm font-semibold text-gray-900">₱{dailySalesTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="text-sm font-medium text-gray-700">Expected Deposit:</span>
+                            <span className="text-base font-bold text-green-700">₱{expectedDepositAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {expenses.length === 0 && (
+                  <div className="text-center py-8 border-2 border-dashed border-orange-300 rounded-lg bg-white">
+                    <Receipt className="h-12 w-12 text-orange-400 mx-auto mb-3" />
+                    <p className="text-sm text-gray-600 mb-2">No expenses added yet</p>
+                    <p className="text-xs text-gray-500">Click "Add Expense" to justify deposit differences</p>
+                  </div>
+                )}
+              </Card>
+
               {/* Amount */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1200,11 +1471,23 @@ const Deposits = () => {
                   required
                   min="0"
                 />
-                {dailySalesTotal > 0 && amount && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    Difference: {parseFloat(amount) >= dailySalesTotal ? '+' : ''}
-                    ₱{(parseFloat(amount) - dailySalesTotal).toFixed(2)}
-                  </p>
+                {dailySalesTotal > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {totalExpenses > 0 && (
+                      <p className="text-xs text-gray-600">
+                        After expenses: ₱{expectedDepositAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    )}
+                    {amount && (
+                      <p className={`text-xs font-medium ${
+                        Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 ? 'text-green-600' : 'text-orange-600'
+                      }`}>
+                        Difference: {parseFloat(amount) >= expectedDepositAmount ? '+' : ''}
+                        ₱{Math.abs(parseFloat(amount) - expectedDepositAmount).toFixed(2)}
+                        {Math.abs(parseFloat(amount) - expectedDepositAmount) <= 1 && ' ✓ Match'}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1391,6 +1674,54 @@ const Deposits = () => {
                 <div>
                   <p className="text-sm font-medium text-gray-500">Review Notes</p>
                   <p className="text-gray-900">{selectedDeposit.reviewNotes}</p>
+                </div>
+              )}
+
+              {/* Expenses Section */}
+              {selectedDeposit.expenses && selectedDeposit.expenses.length > 0 && (
+                <div className="border-t border-gray-200 pt-4">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                    <Receipt className="h-5 w-5 text-orange-600" />
+                    Expenses & Justifications
+                  </h3>
+                  <div className="space-y-3">
+                    {selectedDeposit.expenses.map((expense, index) => (
+                      <Card key={index} className="p-4 bg-orange-50 border border-orange-200">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-sm font-semibold text-gray-900">Expense #{index + 1}</span>
+                              <span className="text-lg font-bold text-orange-700">
+                                ₱{(expense.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            {expense.description && (
+                              <p className="text-sm text-gray-700 mb-2">{expense.description}</p>
+                            )}
+                            {expense.receiptImageUrl && (
+                              <div className="mt-3">
+                                <p className="text-xs font-medium text-gray-600 mb-2">Receipt:</p>
+                                <img 
+                                  src={expense.receiptImageUrl} 
+                                  alt={`Expense receipt ${index + 1}`}
+                                  className="max-w-full max-h-48 rounded-lg border border-gray-200 cursor-pointer hover:opacity-80 transition-opacity"
+                                  onClick={() => window.open(expense.receiptImageUrl, '_blank')}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-gray-700">Total Expenses:</span>
+                        <span className="text-lg font-bold text-blue-700">
+                          ₱{(selectedDeposit.totalExpenses || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 

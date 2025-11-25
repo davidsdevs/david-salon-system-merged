@@ -35,6 +35,8 @@ class DepositService {
         ocrExtractedAmount: depositData.ocrExtractedAmount || null,
         ocrConfidence: depositData.ocrConfidence || null,
         dailySalesTotal: depositData.dailySalesTotal || 0,
+        totalExpenses: depositData.totalExpenses || 0,
+        expenses: depositData.expenses || [],
         difference: depositData.difference || 0,
         validationStatus: depositData.validationStatus || 'pending', // 'pending', 'match', 'mismatch', 'manual_review'
         hasAnomaly: depositData.hasAnomaly || false,

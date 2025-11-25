@@ -800,7 +800,11 @@ const StockTransfer = () => {
             batches: [] // Will be populated if batches found
           };
 
-          // Get batches for this item using FIFO
+          // Get batches for this item using FIFO (automatic selection)
+          // NOTE: Batches are automatically selected using FIFO (First In First Out)
+          // The system selects the oldest batches first based on expiration date
+          // This ensures proper inventory rotation and prevents expired stock accumulation
+          // If you need to manually select specific batches, you can modify this logic
           const batchesResult = await inventoryService.getBatchesForTransfer({
             branchId: finalFromBranchId,
             productId: item.productId,

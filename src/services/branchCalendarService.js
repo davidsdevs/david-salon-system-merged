@@ -28,21 +28,21 @@ import toast from 'react-hot-toast';
 export const getBranchCalendar = async (branchId) => {
   try {
     const calendarRef = collection(db, 'calendar');
-    // Fetch all entries for branch and filter in memory to avoid composite index requirement
+    // Fetch all entries for branch
     const q = query(
       calendarRef,
       where('branchId', '==', branchId)
     );
     const snapshot = await getDocs(q);
     
-    // Filter approved entries and sort by date
+    // Filter active reminders and sort by date
     const entries = snapshot.docs
       .map(doc => ({
         id: doc.id,
         ...doc.data(),
         date: doc.data().date?.toDate() // Convert Firestore Timestamp to Date
       }))
-      .filter(entry => entry.status === 'approved')
+      .filter(entry => entry.status === 'active' || !entry.status) // Include active reminders or entries without status
       .sort((a, b) => {
         if (!a.date || !b.date) return 0;
         return a.date.getTime() - b.date.getTime();
@@ -56,11 +56,11 @@ export const getBranchCalendar = async (branchId) => {
 };
 
 /**
- * Get upcoming holidays/closures
+ * Get upcoming reminders
  * @param {string} branchId - Branch ID
- * @returns {Promise<Array>} Array of upcoming calendar entries
+ * @returns {Promise<Array>} Array of upcoming calendar reminders
  */
-export const getUpcomingClosures = async (branchId) => {
+export const getUpcomingReminders = async (branchId) => {
   try {
     const today = Timestamp.fromDate(new Date());
     const calendarRef = collection(db, 'calendar');
@@ -72,13 +72,15 @@ export const getUpcomingClosures = async (branchId) => {
     );
     const snapshot = await getDocs(q);
     
-    return snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      date: doc.data().date?.toDate()
-    }));
+    return snapshot.docs
+      .map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        date: doc.data().date?.toDate()
+      }))
+      .filter(entry => entry.status === 'active' || !entry.status);
   } catch (error) {
-    console.error('Error fetching upcoming closures:', error);
+    console.error('Error fetching upcoming reminders:', error);
     throw error;
   }
 };
@@ -109,28 +111,21 @@ export const saveBranchCalendarEntry = async (branchId, entryData, currentUser) 
       date: Timestamp.fromDate(new Date(entryData.date)),
       title: entryData.title,
       description: entryData.description || '',
-      type: entryData.type || 'holiday', // 'holiday', 'closure', 'special_hours'
-      allDay: entryData.allDay !== undefined ? entryData.allDay : true,
-      specialHours: entryData.specialHours || null,
+      type: entryData.type || 'reminder', // 'reminder' only
+      allDay: true, // Reminders are always all-day
       updatedAt: Timestamp.now(),
       updatedBy: currentUser.uid
     };
     
     if (!entryData.id) {
-      // New entry - set to pending status
+      // New reminder entry - no approval needed
       data.createdAt = Timestamp.now();
       data.createdBy = currentUser.uid;
-      data.status = 'pending'; // New entries require approval
-      data.requestedBy = currentUser.uid;
-      data.requestedByName = currentUser.displayName || currentUser.email || 'Unknown';
+      data.status = 'active'; // Reminders are active immediately
     } else {
-      // Update existing entry
-      // If it was approved, keep it approved unless it's being edited by operational manager
-      // If it was pending/rejected, keep the status
+      // Update existing reminder
       if (existingData) {
-        data.status = existingData.status || 'pending';
-        data.requestedBy = existingData.requestedBy || currentUser.uid;
-        data.requestedByName = existingData.requestedByName || currentUser.displayName || currentUser.email || 'Unknown';
+        data.status = existingData.status || 'active';
       }
     }
     
@@ -151,11 +146,7 @@ export const saveBranchCalendarEntry = async (branchId, entryData, currentUser) 
       }
     });
     
-    if (!entryData.id) {
-      toast.success('Calendar entry submitted for approval!');
-    } else {
-      toast.success(`Calendar entry ${entryData.id ? 'updated' : 'added'} successfully!`);
-    }
+    toast.success(`Reminder ${entryData.id ? 'updated' : 'added'} successfully!`);
     return entryId;
   } catch (error) {
     console.error('Error saving calendar entry:', error);
@@ -274,8 +265,6 @@ export const deleteBranchCalendarEntry = async (branchId, entryId, currentUser) 
  */
 export const getCalendarEntryTypes = () => {
   return [
-    { value: 'holiday', label: 'Holiday', color: 'bg-red-100 text-red-700' },
-    { value: 'closure', label: 'Temporary Closure', color: 'bg-orange-100 text-orange-700' },
-    { value: 'special_hours', label: 'Special Hours', color: 'bg-blue-100 text-blue-700' }
+    { value: 'reminder', label: 'Reminder', color: 'bg-blue-100 text-blue-700' }
   ];
 };

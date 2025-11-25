@@ -13,6 +13,8 @@ import { useAuth } from '../../context/AuthContext';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import toast from 'react-hot-toast';
+import { inventoryService } from '../../services/inventoryService';
+import { formatDate } from '../../utils/helpers';
 
 const BillingModalPOS = ({
   isOpen,
@@ -417,7 +419,7 @@ const BillingModalPOS = ({
     }
   };
 
-  const handleToggleProduct = (product) => {
+  const handleToggleProduct = async (product) => {
     // Check if product is in stock
     if (product.stock <= 0) {
       toast.error(`${product.name} is out of stock`);
@@ -431,6 +433,25 @@ const BillingModalPOS = ({
         items: prev.items.filter(item => !(item.id === product.id && item.type === 'product'))
       }));
     } else {
+      // Fetch batch information for FIFO tracking
+      let batches = [];
+      try {
+        if (userBranch) {
+          const batchesResult = await inventoryService.getBatchesForSale({
+            branchId: userBranch,
+            productId: product.id,
+            quantity: 1
+          });
+          
+          if (batchesResult.success && batchesResult.batches.length > 0) {
+            batches = batchesResult.batches;
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching batches:', error);
+        // Continue without batch info if there's an error
+      }
+
       setFormData(prev => ({
         ...prev,
         items: [...prev.items, {
@@ -441,7 +462,13 @@ const BillingModalPOS = ({
           price: product.price || 0,
           quantity: 1,
           stock: product.stock || 0,
-          stockId: product.stockId || null
+          stockId: product.stockId || null,
+          batches: batches, // Store batch information for FIFO tracking
+          unitCost: product.unitCost || 0, // Store unit cost for commission calculation
+          commissionPercentage: product.commissionPercentage || 0, // Store commission percentage
+          commissionerId: '', // Will be set when commissioner is selected
+          commissionerName: '', // Will be set when commissioner is selected
+          commissionPoints: 0 // Will be calculated when commissioner is selected
         }]
       }));
     }
@@ -477,6 +504,48 @@ const BillingModalPOS = ({
       updatedItems[index].quantity = quantity;
       if (updatedItems[index].type === 'product') {
         updatedItems[index].price = updatedItems[index].basePrice * quantity;
+        
+        // Recalculate commission points if commissioner is selected
+        if (updatedItems[index].commissionerId && updatedItems[index].unitCost && updatedItems[index].commissionPercentage) {
+          const unitCost = Number(updatedItems[index].unitCost) || 0;
+          const commissionPercentage = Number(updatedItems[index].commissionPercentage) || 0;
+          updatedItems[index].commissionPoints = (unitCost * quantity) * (commissionPercentage / 100);
+        }
+        
+        // Fetch updated batch information for the new quantity
+        if (userBranch && updatedItems[index].id) {
+          inventoryService.getBatchesForSale({
+            branchId: userBranch,
+            productId: updatedItems[index].id,
+            quantity: quantity
+          }).then(batchesResult => {
+            if (batchesResult.success && batchesResult.batches.length > 0) {
+              updatedItems[index].batches = batchesResult.batches;
+              setFormData(prev => {
+                const newItems = [...prev.items];
+                newItems[index] = updatedItems[index];
+                return { ...prev, items: newItems };
+              });
+            }
+          }).catch(error => {
+            console.error('Error fetching batches for quantity update:', error);
+          });
+        }
+      }
+    } else if (field === 'commissionerId') {
+      // Handle commissioner selection for products
+      const commissioner = stylists.find(s => s.id === value);
+      updatedItems[index].commissionerId = value;
+      updatedItems[index].commissionerName = commissioner ? `${commissioner.firstName} ${commissioner.lastName}` : '';
+      
+      // Calculate commission points: (unitCost * quantity) * (commissionPercentage / 100)
+      if (updatedItems[index].type === 'product' && value) {
+        const unitCost = Number(updatedItems[index].unitCost) || 0;
+        const quantity = Number(updatedItems[index].quantity) || 1;
+        const commissionPercentage = Number(updatedItems[index].commissionPercentage) || 0;
+        updatedItems[index].commissionPoints = (unitCost * quantity) * (commissionPercentage / 100);
+      } else {
+        updatedItems[index].commissionPoints = 0;
       }
     } else {
       updatedItems[index][field] = value;
@@ -1150,6 +1219,36 @@ const BillingModalPOS = ({
                                 <span className="ml-2 font-semibold text-green-600">
                                   = ₱{item.price}
                                 </span>
+                                {/* Display batch information for FIFO tracking */}
+                                {item.batches && item.batches.length > 0 && (
+                                  <div className="mt-1 text-xs text-gray-500">
+                                    <span className="font-medium">Batch(es): </span>
+                                    {item.batches.map((batch, idx) => {
+                                      const expirationDate = batch.expirationDate 
+                                        ? (batch.expirationDate instanceof Date 
+                                            ? batch.expirationDate 
+                                            : batch.expirationDate.toDate 
+                                            ? batch.expirationDate.toDate() 
+                                            : new Date(batch.expirationDate))
+                                        : null;
+                                      const formattedDate = expirationDate 
+                                        ? formatDate(expirationDate, 'MMM dd, yyyy')
+                                        : 'N/A';
+                                      
+                                      return (
+                                        <div key={idx} className="mt-1">
+                                          <span className="font-medium">{batch.batchNumber}</span>
+                                          <span className="ml-1">({batch.quantity} unit{batch.quantity !== 1 ? 's' : ''})</span>
+                                          {expirationDate && (
+                                            <span className="ml-2 text-orange-600">
+                                              • Expires: {formattedDate}
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </>
                             ) : (
                               <>
@@ -1214,7 +1313,36 @@ const BillingModalPOS = ({
                           </div>
                         )}
 
-                        {/* Stylist Selection (only for services) */}
+                        {/* Commissioner Selection (for products) */}
+                        {item.type === 'product' && (
+                          <div className="mb-2">
+                            <label className="text-xs text-gray-500 mb-1 block">
+                              Commissioner (Stylist)
+                            </label>
+                            <select
+                              value={item.commissionerId || ''}
+                              onChange={(e) => {
+                                handleUpdateItem(index, 'commissionerId', e.target.value);
+                              }}
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-[#2D1B4E] focus:border-transparent"
+                            >
+                              <option value="">No Commissioner</option>
+                              {stylists.map(stylist => (
+                                <option key={stylist.id} value={stylist.id}>
+                                  {stylist.firstName} {stylist.lastName}
+                                </option>
+                              ))}
+                            </select>
+                            {item.commissionerId && item.commissionPoints > 0 && (
+                              <p className="text-xs mt-1 text-purple-600">
+                                Commission: ₱{item.commissionPoints.toFixed(2)} 
+                                {item.commissionPercentage > 0 && ` (${item.commissionPercentage}% of ₱${((item.unitCost || 0) * (item.quantity || 1)).toFixed(2)})`}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Stylist Selection (only for services, and only changeable for TR) */}
                         {item.type === 'service' && (
                           <div className="mb-2">
                             <label className="text-xs text-gray-500 mb-1 block">

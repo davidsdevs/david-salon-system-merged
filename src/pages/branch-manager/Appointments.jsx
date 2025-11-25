@@ -40,17 +40,25 @@ const BranchManagerAppointments = () => {
       // Fetch appointments
       const appointmentsData = await getAppointmentsByBranch(userBranch);
       
-      // Fetch services and stylists for enrichment
+      // Fetch services, stylists, and clients for enrichment
       const servicesData = await getBranchServices(userBranch);
       
       const stylistsData = await getUsersByRole(USER_ROLES.STYLIST);
       const branchStylists = stylistsData.filter(s => s.branchId === userBranch);
+      
+      const clientsData = await getUsersByRole(USER_ROLES.CLIENT);
       
       setServices(servicesData);
       setStylists(branchStylists);
       
       // Enrich appointments
       const enrichedAppointments = appointmentsData.map(apt => {
+        // Get client information
+        const client = clientsData.find(c => c.id === apt.clientId);
+        const clientName = client 
+          ? `${client.firstName || ''} ${client.lastName || ''}`.trim() 
+          : (apt.clientName || 'Unknown Client');
+        
         // Handle multi-service appointments
         if (apt.services && apt.services.length > 0) {
           const enrichedServices = apt.services.map(svc => {
@@ -67,6 +75,13 @@ const BranchManagerAppointments = () => {
           return {
             ...apt,
             services: enrichedServices,
+            clientName: clientName,
+            client: client ? {
+              firstName: client.firstName,
+              lastName: client.lastName,
+              email: client.email,
+              phone: client.phone || client.phoneNumber
+            } : apt.client || null,
             branchName: userBranchData?.name || userBranchData?.branchName || ''
           };
         }
@@ -79,6 +94,13 @@ const BranchManagerAppointments = () => {
           serviceName: service?.name || 'Unknown Service',
           isChemical: service?.isChemical || false,
           stylistName: stylist ? `${stylist.firstName} ${stylist.lastName}` : 'Unassigned',
+          clientName: clientName,
+          client: client ? {
+            firstName: client.firstName,
+            lastName: client.lastName,
+            email: client.email,
+            phone: client.phone || client.phoneNumber
+          } : apt.client || null,
           branchName: userBranchData?.name || userBranchData?.branchName || ''
         };
       });
@@ -531,15 +553,13 @@ const BranchManagerAppointments = () => {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div>
                           <div className="text-sm font-medium text-gray-900">
-                            {appointment.clientName || appointment.client?.firstName 
-                              ? `${appointment.client?.firstName || ''} ${appointment.client?.lastName || ''}`.trim() 
-                              : 'Unknown Client'}
+                            {appointment.clientName || 'Unknown Client'}
                           </div>
                           {appointment.client?.email && (
                             <div className="text-sm text-gray-500">{appointment.client.email}</div>
                           )}
-                          {appointment.client?.phone && (
-                            <div className="text-sm text-gray-500">{appointment.client.phone}</div>
+                          {(appointment.client?.phone || appointment.client?.phoneNumber) && (
+                            <div className="text-sm text-gray-500">{appointment.client.phone || appointment.client.phoneNumber}</div>
                           )}
                         </div>
                       </td>

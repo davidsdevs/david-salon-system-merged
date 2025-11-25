@@ -11,7 +11,7 @@ import {
   Truck, 
   AlertTriangle, 
   BarChart3, 
-  DollarSign, 
+  Banknote, 
   ClipboardList, 
   Calendar
 } from 'lucide-react';
@@ -38,7 +38,7 @@ const InventoryLayout = () => {
     { path: ROUTES.INVENTORY_EXPIRY_TRACKER, label: 'Expiry Tracker', icon: Calendar },
     { section: 'Reports & Analysis' },
     { path: ROUTES.INVENTORY_REPORTS, label: 'Reports', icon: BarChart3 },
-    { path: ROUTES.INVENTORY_COST_ANALYSIS, label: 'Cost Analysis', icon: DollarSign },
+    { path: ROUTES.INVENTORY_COST_ANALYSIS, label: 'Cost Analysis', icon: Banknote },
     { path: ROUTES.INVENTORY_AUDIT, label: 'Inventory Audit', icon: ClipboardList },
   ];
 

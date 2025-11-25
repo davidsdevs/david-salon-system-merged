@@ -7,6 +7,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Calendar, ChevronLeft, ChevronRight, Clock, Users, ArrowRight, Edit, Plus, X, History } from 'lucide-react';
 import { getUsersByBranch, getUserById } from '../../services/userService';
 import { getLendingRequests, getActiveLending, getActiveLendingFromBranch, getActiveLendingForBranch } from '../../services/stylistLendingService';
+import { getLeaveRequestsByBranch } from '../../services/leaveManagementService';
 import { getBranchById } from '../../services/branchService';
 import { 
   getActiveSchedulesByEmployee,
@@ -66,6 +67,8 @@ const StaffSchedule = () => {
   const [configStartDate, setConfigStartDate] = useState(''); // Start date for the configuration
   const [isAddingShift, setIsAddingShift] = useState(false); // Track if we're adding (true) or editing (false) in modal
   const [branchHours, setBranchHours] = useState(null); // Branch operating hours
+  const [leaveRequests, setLeaveRequests] = useState([]); // All leave requests for the branch
+  const [staffLeaveMap, setStaffLeaveMap] = useState({}); // { staffId: [{ startDate, endDate, status, type }] }
   const [currentWeek, setCurrentWeek] = useState(() => {
     const date = new Date();
     const day = date.getDay();
@@ -83,6 +86,7 @@ const StaffSchedule = () => {
     if (userBranch) {
       fetchBranchHours();
       fetchAllScheduleConfigs();
+      fetchLeaveRequests();
       fetchStaff();
     }
   }, [userBranch, currentWeek]); // Reload when week changes
@@ -122,6 +126,129 @@ const StaffSchedule = () => {
       }
     } catch (error) {
       console.error('Error fetching schedule configurations:', error);
+    }
+  };
+
+  const fetchLeaveRequests = async () => {
+    try {
+      if (userBranch) {
+        const leaves = await getLeaveRequestsByBranch(userBranch);
+        setLeaveRequests(leaves);
+
+        console.log('Fetched leave requests:', leaves.length, leaves);
+
+        // Create a map of staff leaves for quick lookup
+        const leaveMap = {};
+        leaves.forEach(leave => {
+          // Only include approved or pending leaves (cancelled/rejected don't affect schedules)
+          if (leave.status === 'approved' || leave.status === 'pending') {
+            const employeeId = leave.employeeId;
+            if (!leaveMap[employeeId]) {
+              leaveMap[employeeId] = [];
+            }
+            
+            // Ensure dates are Date objects - handle Firestore Timestamps
+            let startDate, endDate;
+            
+            if (leave.startDate instanceof Date) {
+              startDate = new Date(leave.startDate);
+            } else if (leave.startDate && typeof leave.startDate.toDate === 'function') {
+              startDate = leave.startDate.toDate();
+            } else if (leave.startDate) {
+              startDate = new Date(leave.startDate);
+            } else {
+              console.warn('Invalid startDate for leave:', leave);
+              return; // Skip this leave if dates are invalid
+            }
+            
+            if (leave.endDate instanceof Date) {
+              endDate = new Date(leave.endDate);
+            } else if (leave.endDate && typeof leave.endDate.toDate === 'function') {
+              endDate = leave.endDate.toDate();
+            } else if (leave.endDate) {
+              endDate = new Date(leave.endDate);
+            } else {
+              console.warn('Invalid endDate for leave:', leave);
+              return; // Skip this leave if dates are invalid
+            }
+            
+            // Normalize dates to start of day
+            startDate.setHours(0, 0, 0, 0);
+            endDate.setHours(23, 59, 59, 999);
+            
+            leaveMap[employeeId].push({
+              startDate,
+              endDate,
+              status: leave.status,
+              type: leave.type,
+              reason: leave.reason
+            });
+            
+            console.log(`Added leave to map for employee ${employeeId}:`, {
+              startDate: startDate.toISOString(),
+              endDate: endDate.toISOString(),
+              type: leave.type,
+              status: leave.status
+            });
+          }
+        });
+        
+        console.log('Staff leave map created:', {
+          employeeIds: Object.keys(leaveMap),
+          leaveCounts: Object.keys(leaveMap).map(id => ({ id, count: leaveMap[id].length }))
+        });
+        setStaffLeaveMap(leaveMap);
+      }
+    } catch (error) {
+      console.error('Error fetching leave requests:', error);
+      // Try fetching without orderBy if the index doesn't exist
+      try {
+        const { collection, query, where, getDocs } = await import('firebase/firestore');
+        const { db } = await import('../../config/firebase');
+        const q = query(
+          collection(db, 'leave_requests'),
+          where('branchId', '==', userBranch)
+        );
+        const snapshot = await getDocs(q);
+        const leaves = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+          startDate: doc.data().startDate?.toDate(),
+          endDate: doc.data().endDate?.toDate(),
+          requestedAt: doc.data().requestedAt?.toDate(),
+        }));
+        
+        setLeaveRequests(leaves);
+        
+        // Create leave map
+        const leaveMap = {};
+        leaves.forEach(leave => {
+          if (leave.status === 'approved' || leave.status === 'pending') {
+            const employeeId = leave.employeeId;
+            if (!leaveMap[employeeId]) {
+              leaveMap[employeeId] = [];
+            }
+            
+            const startDate = leave.startDate instanceof Date 
+              ? leave.startDate 
+              : (leave.startDate?.toDate ? leave.startDate.toDate() : new Date(leave.startDate));
+            const endDate = leave.endDate instanceof Date 
+              ? leave.endDate 
+              : (leave.endDate?.toDate ? leave.endDate.toDate() : new Date(leave.endDate));
+            
+            leaveMap[employeeId].push({
+              startDate,
+              endDate,
+              status: leave.status,
+              type: leave.type,
+              reason: leave.reason
+            });
+          }
+        });
+        setStaffLeaveMap(leaveMap);
+      } catch (fallbackError) {
+        console.error('Error in fallback leave fetch:', fallbackError);
+      }
     }
   };
 
@@ -530,6 +657,82 @@ const StaffSchedule = () => {
     return isLentOut;
   };
 
+  // Helper function to check if a staff member is on leave on a specific date
+  const isStaffOnLeave = (memberId, date) => {
+    if (!memberId || !date) return false;
+    
+    const leaves = staffLeaveMap[memberId];
+    if (!leaves || leaves.length === 0) {
+      return false;
+    }
+    
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+    const checkTime = checkDate.getTime();
+    
+    // Check if date falls within any approved or pending leave period
+    const isOnLeave = leaves.some(leave => {
+      if (!leave.startDate || !leave.endDate) return false;
+      
+      // Dates should already be normalized Date objects from fetchLeaveRequests
+      const startDate = leave.startDate instanceof Date ? leave.startDate : new Date(leave.startDate);
+      const endDate = leave.endDate instanceof Date ? leave.endDate : new Date(leave.endDate);
+      
+      const startTime = startDate.getTime();
+      const endTime = endDate.getTime();
+      
+      const result = checkTime >= startTime && checkTime <= endTime;
+      
+      // Debug logging (only log when match found to avoid spam)
+      if (result) {
+        console.log(`✓ Staff ${memberId} is on leave on ${checkDate.toISOString().split('T')[0]}:`, {
+          checkDate: checkDate.toISOString(),
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+          leaveType: leave.type,
+          status: leave.status
+        });
+      }
+      
+      return result;
+    });
+    
+    return isOnLeave;
+  };
+
+  // Helper function to get leave info for a specific date
+  const getLeaveInfoForDate = (memberId, date) => {
+    if (!memberId || !date) return null;
+    
+    const leaves = staffLeaveMap[memberId];
+    if (!leaves || leaves.length === 0) {
+      return null;
+    }
+    
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+    
+    // Find the leave that covers this date
+    const leave = leaves.find(leave => {
+      if (!leave.startDate || !leave.endDate) return false;
+      
+      // Ensure dates are Date objects
+      const startDate = leave.startDate instanceof Date 
+        ? new Date(leave.startDate) 
+        : (leave.startDate?.toDate ? leave.startDate.toDate() : new Date(leave.startDate));
+      startDate.setHours(0, 0, 0, 0);
+      
+      const endDate = leave.endDate instanceof Date 
+        ? new Date(leave.endDate) 
+        : (leave.endDate?.toDate ? leave.endDate.toDate() : new Date(leave.endDate));
+      endDate.setHours(23, 59, 59, 999);
+      
+      return checkDate >= startDate && checkDate <= endDate;
+    });
+    
+    return leave || null;
+  };
+
   // Helper function to check if a staff member is lent TO this branch and if date is outside lending period
   const isBorrowedStaffOutsideLendingPeriod = (member, date) => {
     if (!member || !date) return false;
@@ -598,6 +801,13 @@ const StaffSchedule = () => {
     
     const memberId = member.id || member.uid;
     
+    // Check if staff is on leave on this date
+    if (date && isStaffOnLeave(memberId, date)) {
+      const leave = getLeaveInfoForDate(memberId, date);
+      toast.error(`Cannot add shift: Staff member is on leave from ${formatDate(leave.startDate, 'MMM dd, yyyy')} to ${formatDate(leave.endDate, 'MMM dd, yyyy')}`);
+      return;
+    }
+    
     // Check if staff is lent out on this date (staff lent OUT FROM this branch)
     if (date && isStaffLentOut(memberId, date)) {
       const lending = lentOutData[memberId];
@@ -655,6 +865,13 @@ const StaffSchedule = () => {
 
     const memberId = selectedStaff.id || selectedStaff.uid;
     
+    // Check if staff is on leave on the date being edited
+    if (selectedDate && isStaffOnLeave(memberId, selectedDate)) {
+      const leave = getLeaveInfoForDate(memberId, selectedDate);
+      toast.error(`Cannot save shift: Staff member is on leave from ${formatDate(leave.startDate, 'MMM dd, yyyy')} to ${formatDate(leave.endDate, 'MMM dd, yyyy')}`);
+      return;
+    }
+    
     // Check if staff is lent out on the date being edited (staff lent OUT FROM this branch)
     // For recurring shifts, check if staff is lent out during the config start date period
     if (selectedDate && isStaffLentOut(memberId, selectedDate)) {
@@ -677,6 +894,13 @@ const StaffSchedule = () => {
       
       if (dayIndex !== -1 && weekDates[dayIndex]) {
         const actualDate = weekDates[dayIndex];
+        
+        // Check if staff is on leave
+        if (isStaffOnLeave(memberId, actualDate)) {
+          const leave = getLeaveInfoForDate(memberId, actualDate);
+          toast.error(`Cannot save shift: Staff member is on leave from ${formatDate(leave.startDate, 'MMM dd, yyyy')} to ${formatDate(leave.endDate, 'MMM dd, yyyy')}`);
+          return;
+        }
         
         // Check if staff is lent out (lent OUT FROM this branch)
         if (isStaffLentOut(memberId, actualDate)) {
@@ -738,6 +962,16 @@ const StaffSchedule = () => {
           const dayIndex = DAYS_OF_WEEK.findIndex(d => d.key === dayKey);
           if (dayIndex !== -1 && weekDates[dayIndex]) {
             const actualDate = weekDates[dayIndex];
+            
+            // Check if staff is on leave on this specific date
+            if (isStaffOnLeave(memberId, actualDate)) {
+              const leave = getLeaveInfoForDate(memberId, actualDate);
+              const dayLabel = DAYS_OF_WEEK[dayIndex]?.label || dayKey;
+              validationErrors.push(
+                `${memberName} - ${dayLabel} (${formatDate(actualDate, 'MMM dd, yyyy')}): On leave from ${formatDate(leave.startDate, 'MMM dd, yyyy')} to ${formatDate(leave.endDate, 'MMM dd, yyyy')}`
+              );
+              return; // Skip this day - use return instead of continue in forEach
+            }
             
             // Check if staff is lent out on this specific date (lent OUT FROM this branch)
             if (isStaffLentOut(memberId, actualDate)) {
@@ -1456,6 +1690,10 @@ const StaffSchedule = () => {
                               const memberId = member.id || member.uid;
                               const editableShift = editableShifts[memberId]?.[dayKey];
                               
+                              // Check if staff is on leave on this date
+                              const onLeave = date && isStaffOnLeave(memberId, date);
+                              const leaveInfo = date && onLeave ? getLeaveInfoForDate(memberId, date) : null;
+                              
                               // Check if there's a lending day (can't edit)
                               if (shift?.isLending) {
                                 return (
@@ -1480,14 +1718,43 @@ const StaffSchedule = () => {
                                 );
                               }
                               
+                              // Check if staff is on leave (show leave indicator, can't edit)
+                              if (onLeave && leaveInfo) {
+                                const leaveTypeLabels = {
+                                  vacation: 'Vacation',
+                                  sick: 'Sick',
+                                  personal: 'Personal',
+                                  emergency: 'Emergency',
+                                  maternity: 'Maternity',
+                                  paternity: 'Paternity',
+                                  bereavement: 'Bereavement',
+                                  undetermined: 'Undetermined'
+                                };
+                                return (
+                                  <>
+                                    <div className="px-3 py-1.5 rounded-lg text-xs font-medium bg-orange-100 text-orange-800">
+                                      ON LEAVE
+                                    </div>
+                                    <div className="text-xs text-orange-600 font-medium">
+                                      {leaveTypeLabels[leaveInfo.type] || 'Leave'}
+                                    </div>
+                                    {leaveInfo.status === 'pending' && (
+                                      <div className="text-xs text-yellow-600">
+                                        (Pending)
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              }
+                              
                               // Check if staff is lent out on this date (lent OUT FROM this branch)
                               const isLentOut = date && isStaffLentOut(memberId, date);
                               
                               // Check if borrowed staff (lent TO this branch) and date is outside lending period
                               const isBorrowedOutsidePeriod = date && isBorrowedStaffOutsideLendingPeriod(member, date);
                               
-                              // Combined check: cannot edit if lent out OR borrowed outside period
-                              const cannotEdit = isLentOut || isBorrowedOutsidePeriod;
+                              // Combined check: cannot edit if on leave, lent out OR borrowed outside period
+                              const cannotEdit = onLeave || isLentOut || isBorrowedOutsidePeriod;
                               
                               // Show editable shift if exists
                               if (editableShift && editableShift.start && editableShift.end) {
@@ -1495,7 +1762,7 @@ const StaffSchedule = () => {
                                   <div 
                                     className={`flex flex-col items-center gap-1 ${cannotEdit ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                                     onClick={() => !cannotEdit && handleEditShift(member, dayKey, date)}
-                                    title={cannotEdit ? (isBorrowedOutsidePeriod ? `Cannot edit: Staff only lent to this branch from ${formatDate(member.lendingStartDate, 'MMM dd, yyyy')} to ${formatDate(member.lendingEndDate, 'MMM dd, yyyy')}` : 'Cannot edit: Staff member is lent out') : 'Click to edit'}
+                                    title={cannotEdit ? (onLeave ? `Cannot edit: Staff member is on leave from ${formatDate(leaveInfo.startDate, 'MMM dd, yyyy')} to ${formatDate(leaveInfo.endDate, 'MMM dd, yyyy')}` : isBorrowedOutsidePeriod ? `Cannot edit: Staff only lent to this branch from ${formatDate(member.lendingStartDate, 'MMM dd, yyyy')} to ${formatDate(member.lendingEndDate, 'MMM dd, yyyy')}` : 'Cannot edit: Staff member is lent out') : 'Click to edit'}
                                   >
                                     <div className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
                                       cannotEdit 
@@ -1511,7 +1778,7 @@ const StaffSchedule = () => {
                                     </div>
                                     {cannotEdit ? (
                                       <div className="text-xs text-red-600 font-medium">
-                                        {isBorrowedOutsidePeriod ? 'Outside lending period' : 'Lent out'}
+                                        {onLeave ? 'On Leave' : isBorrowedOutsidePeriod ? 'Outside lending period' : 'Lent out'}
                                       </div>
                                     ) : (
                                       <div className="text-xs text-primary-600 font-medium">
@@ -1532,7 +1799,7 @@ const StaffSchedule = () => {
                                       ? 'text-gray-300 cursor-not-allowed bg-gray-50'
                                       : 'text-gray-400 hover:text-primary-600 hover:bg-primary-50'
                                   }`}
-                                  title={cannotEdit ? (isBorrowedOutsidePeriod ? `Cannot add shift: Staff only lent to this branch from ${formatDate(member.lendingStartDate, 'MMM dd, yyyy')} to ${formatDate(member.lendingEndDate, 'MMM dd, yyyy')}` : 'Cannot add shift: Staff member is lent out') : 'Add shift'}
+                                  title={cannotEdit ? (onLeave ? `Cannot add shift: Staff member is on leave from ${formatDate(leaveInfo.startDate, 'MMM dd, yyyy')} to ${formatDate(leaveInfo.endDate, 'MMM dd, yyyy')}` : isBorrowedOutsidePeriod ? `Cannot add shift: Staff only lent to this branch from ${formatDate(member.lendingStartDate, 'MMM dd, yyyy')} to ${formatDate(member.lendingEndDate, 'MMM dd, yyyy')}` : 'Cannot add shift: Staff member is lent out') : 'Add shift'}
                                 >
                                   <Plus className="w-3 h-3" />
                                   Add
@@ -1541,63 +1808,99 @@ const StaffSchedule = () => {
                             })()
                           ) : (
                             // View Mode - Display existing shifts
-                            shift ? (
-                              <div 
-                                className="flex flex-col items-center gap-1 group relative"
-                              >
-                                {shift.isLending ? (
-                                  <>
-                                    <div className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
-                                      shift.isLentToBranch 
-                                        ? 'bg-blue-100 text-blue-800' 
-                                        : 'bg-purple-100 text-purple-800'
-                                    }`}>
-                                      LENDING
+                            (() => {
+                              const memberId = member.id || member.uid;
+                              const onLeave = date && isStaffOnLeave(memberId, date);
+                              const leaveInfo = date && onLeave ? getLeaveInfoForDate(memberId, date) : null;
+                              
+                              // Show leave indicator if staff is on leave
+                              if (onLeave && leaveInfo) {
+                                const leaveTypeLabels = {
+                                  vacation: 'Vacation',
+                                  sick: 'Sick',
+                                  personal: 'Personal',
+                                  emergency: 'Emergency',
+                                  maternity: 'Maternity',
+                                  paternity: 'Paternity',
+                                  bereavement: 'Bereavement',
+                                  undetermined: 'Undetermined'
+                                };
+                                return (
+                                  <div className="flex flex-col items-center gap-1">
+                                    <div className="px-3 py-1.5 rounded-lg text-xs font-medium bg-orange-100 text-orange-800">
+                                      ON LEAVE
                                     </div>
-                                    {shift.lendingBranch && (
-                                      <div className={`text-xs font-medium ${
+                                    <div className="text-xs text-orange-600 font-medium">
+                                      {leaveTypeLabels[leaveInfo.type] || 'Leave'}
+                                    </div>
+                                    {leaveInfo.status === 'pending' && (
+                                      <div className="text-xs text-yellow-600">
+                                        (Pending)
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }
+                              
+                              // Show shift if exists
+                              return shift ? (
+                                <div 
+                                  className="flex flex-col items-center gap-1 group relative"
+                                >
+                                  {shift.isLending ? (
+                                    <>
+                                      <div className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
                                         shift.isLentToBranch 
-                                          ? 'text-blue-600' 
-                                          : 'text-purple-600'
-                                      }`}>
-                                        {shift.isLentToBranch ? 'From: ' : 'To: '}{shift.lendingBranch}
-                                      </div>
-                                    )}
-                                  </>
-                                ) : (
-                                  <>
-                                    <div 
-                                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                                        isDateSpecific 
                                           ? 'bg-blue-100 text-blue-800' 
-                                          : shift.isActive === false
-                                          ? 'bg-gray-100 text-gray-500 line-through'
-                                          : 'bg-primary-100 text-primary-800'
-                                      }`}
-                                    >
-                                      {formatTime12Hour(shift.start)} - {formatTime12Hour(shift.end)}
-                                    </div>
-                                    {isDateSpecific && (
-                                      <div className="text-xs text-blue-600 font-medium">
-                                        One-Time
+                                          : 'bg-purple-100 text-purple-800'
+                                      }`}>
+                                        LENDING
                                       </div>
-                                    )}
-                                    {shift.isRecurring && shift.isActive === false && (
-                                      <div className="text-xs font-medium text-gray-500 line-through">
-                                        Inactive
+                                      {shift.lendingBranch && (
+                                        <div className={`text-xs font-medium ${
+                                          shift.isLentToBranch 
+                                            ? 'text-blue-600' 
+                                            : 'text-purple-600'
+                                        }`}>
+                                          {shift.isLentToBranch ? 'From: ' : 'To: '}{shift.lendingBranch}
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div 
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                          isDateSpecific 
+                                            ? 'bg-blue-100 text-blue-800' 
+                                            : shift.isActive === false
+                                            ? 'bg-gray-100 text-gray-500 line-through'
+                                            : 'bg-primary-100 text-primary-800'
+                                        }`}
+                                      >
+                                        {formatTime12Hour(shift.start)} - {formatTime12Hour(shift.end)}
                                       </div>
-                                    )}
-                                    <div className="text-xs text-gray-500">
-                                      {Math.round(
-                                        ((new Date(`2000-01-01 ${shift.end}`) - new Date(`2000-01-01 ${shift.start}`)) / (1000 * 60 * 60)) * 10
-                                      ) / 10}h
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="text-xs text-gray-300">-</div>
-                            )
+                                      {isDateSpecific && (
+                                        <div className="text-xs text-blue-600 font-medium">
+                                          One-Time
+                                        </div>
+                                      )}
+                                      {shift.isRecurring && shift.isActive === false && (
+                                        <div className="text-xs font-medium text-gray-500 line-through">
+                                          Inactive
+                                        </div>
+                                      )}
+                                      <div className="text-xs text-gray-500">
+                                        {Math.round(
+                                          ((new Date(`2000-01-01 ${shift.end}`) - new Date(`2000-01-01 ${shift.start}`)) / (1000 * 60 * 60)) * 10
+                                        ) / 10}h
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-gray-300">-</div>
+                              );
+                            })()
                           )}
                         </td>
                       );

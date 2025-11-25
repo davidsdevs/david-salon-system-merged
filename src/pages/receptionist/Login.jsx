@@ -122,3 +122,7 @@ const ReceptionistLogin = () => {
 
 export default ReceptionistLogin;
 
+
+
+
+

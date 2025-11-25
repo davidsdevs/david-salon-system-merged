@@ -20,9 +20,7 @@ const CalendarFormModal = ({
     date: '',
     title: '',
     description: '',
-    type: 'holiday',
-    allDay: true,
-    specialHours: { open: '09:00', close: '18:00' }
+    type: 'reminder'
   });
   const [showCalendar, setShowCalendar] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -94,9 +92,7 @@ const CalendarFormModal = ({
         date: dateValue,
         title: entry.title,
         description: entry.description || '',
-        type: entry.type,
-        allDay: entry.allDay,
-        specialHours: entry.specialHours || { open: '09:00', close: '18:00' }
+        type: entry.type || 'reminder'
       });
       if (entry.date) {
         const entryDate = typeof entry.date === 'string' ? new Date(entry.date) : entry.date;
@@ -108,9 +104,7 @@ const CalendarFormModal = ({
         date: initialDate,
         title: '',
         description: '',
-        type: 'holiday',
-        allDay: true,
-        specialHours: { open: '09:00', close: '18:00' }
+        type: 'reminder'
       });
       setCurrentMonth(initialDate ? new Date(initialDate) : new Date());
     }
@@ -135,7 +129,7 @@ const CalendarFormModal = ({
           {/* Header */}
           <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
             <h2 className="text-xl font-bold text-gray-900">
-              {entry ? 'Edit Calendar Entry' : 'Add Calendar Entry'}
+              {entry ? 'Edit Reminder' : 'Add Reminder'}
             </h2>
             <button
               type="button"
@@ -149,8 +143,8 @@ const CalendarFormModal = ({
 
           {/* Content */}
           <div className="p-6 space-y-4">
-            {/* Date and Type */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Date */}
+            <div>
               <div className="relative">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Date *
@@ -263,22 +257,6 @@ const CalendarFormModal = ({
                   </div>
                 )}
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Type *
-                </label>
-                <select
-                  required
-                  value={formData.type}
-                  onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                >
-                  {entryTypes.map(type => (
-                    <option key={type.value} value={type.value}>{type.label}</option>
-                  ))}
-                </select>
-              </div>
             </div>
 
             {/* Title */}
@@ -292,7 +270,7 @@ const CalendarFormModal = ({
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                placeholder="e.g., Christmas Day, Maintenance Closure"
+                placeholder="e.g., Team Meeting, Equipment Maintenance"
               />
             </div>
 
@@ -310,49 +288,6 @@ const CalendarFormModal = ({
               />
             </div>
 
-            {/* All Day Toggle */}
-            <div className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                id="allDay"
-                checked={formData.allDay}
-                onChange={(e) => setFormData({ ...formData, allDay: e.target.checked })}
-                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-              />
-              <label htmlFor="allDay" className="text-sm font-medium text-gray-700">
-                All day (Branch closed for the entire day)
-              </label>
-            </div>
-
-            {/* Special Hours */}
-            {!formData.allDay && formData.type === 'special_hours' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Special Operating Hours
-                </label>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="time"
-                    value={formData.specialHours.open}
-                    onChange={(e) => setFormData({ 
-                      ...formData, 
-                      specialHours: { ...formData.specialHours, open: e.target.value }
-                    })}
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                  <span className="text-gray-500">to</span>
-                  <input
-                    type="time"
-                    value={formData.specialHours.close}
-                    onChange={(e) => setFormData({ 
-                      ...formData, 
-                      specialHours: { ...formData.specialHours, close: e.target.value }
-                    })}
-                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Footer */}
@@ -371,7 +306,7 @@ const CalendarFormModal = ({
               className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {loading && <LoadingSpinner size="sm" />}
-              {loading ? 'Saving...' : (entry ? 'Update Entry' : 'Add Entry')}
+              {loading ? 'Saving...' : (entry ? 'Update Reminder' : 'Add Reminder')}
             </button>
           </div>
         </form>

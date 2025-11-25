@@ -325,7 +325,7 @@ const BranchProducts = () => {
         )}
         {catalogStyle.showPrice && (
           <p className="text-lg font-bold text-[#160B53] mt-2">
-            Γé▒{product.otcPrice?.toLocaleString() || product.salonUsePrice?.toLocaleString() || product.unitCost?.toLocaleString() || 'N/A'}
+            ₱{product.otcPrice?.toLocaleString() || product.salonUsePrice?.toLocaleString() || product.unitCost?.toLocaleString() || 'N/A'}
           </p>
         )}
       </div>
@@ -1217,7 +1217,7 @@ const BranchProducts = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Min Price (Γé▒)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Min Price (₱)</label>
               <Input
                 type="number"
                 min="0"
@@ -1227,7 +1227,7 @@ const BranchProducts = () => {
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Max Price (Γé▒)</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Max Price (₱)</label>
               <Input
                 type="number"
                 min="0"
@@ -1333,10 +1333,10 @@ const BranchProducts = () => {
                       {product.brand || 'N/A'}
                     </td>
                     <td className="px-6 py-4 text-sm font-semibold text-gray-900">
-                      Γé▒{product.unitCost?.toLocaleString() || '0'}
+                      ₱{product.unitCost?.toLocaleString() || '0'}
                     </td>
                     <td className="px-6 py-4 text-sm font-semibold text-gray-900">
-                      Γé▒{product.otcPrice?.toLocaleString() || '0'}
+                      ₱{product.otcPrice?.toLocaleString() || '0'}
                     </td>
                     <td className="px-6 py-4">
                       {product.status ? (
@@ -1540,16 +1540,16 @@ const BranchProducts = () => {
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 mb-1">Unit Cost</p>
-                      <p className="text-sm font-semibold text-gray-900">Γé▒{selectedProduct.unitCost?.toLocaleString() || '0'}</p>
+                      <p className="text-sm font-semibold text-gray-900">₱{selectedProduct.unitCost?.toLocaleString() || '0'}</p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-500 mb-1">OTC Price</p>
-                      <p className="text-sm font-semibold text-gray-900">Γé▒{selectedProduct.otcPrice?.toLocaleString() || '0'}</p>
+                      <p className="text-sm font-semibold text-gray-900">₱{selectedProduct.otcPrice?.toLocaleString() || '0'}</p>
                     </div>
                     {selectedProduct.salonUsePrice && (
                       <div>
                         <p className="text-xs text-gray-500 mb-1">Salon Use Price</p>
-                        <p className="text-sm font-semibold text-gray-900">Γé▒{selectedProduct.salonUsePrice.toLocaleString()}</p>
+                        <p className="text-sm font-semibold text-gray-900">₱{selectedProduct.salonUsePrice.toLocaleString()}</p>
                       </div>
                     )}
                     {selectedProduct.commissionPercentage && (

@@ -384,6 +384,49 @@ const PurchaseOrders = () => {
     return cleaned;
   };
 
+  // Generate next incremental PO number based on existing purchase orders for this branch
+  const generateNextPONumber = () => {
+    if (!userData?.branchId) {
+      throw new Error('Branch ID is required to generate PO number');
+    }
+
+    // Get first 3 characters of branch ID (uppercase)
+    const branchPrefix = userData.branchId.substring(0, 3).toUpperCase();
+    
+    // Filter POs for this branch only (should already be filtered, but double-check)
+    const branchPOs = purchaseOrders.filter(po => po.branchId === userData.branchId);
+    
+    if (!branchPOs || branchPOs.length === 0) {
+      return `PO-${branchPrefix}-${String(1).padStart(2, '0')}`;
+    }
+
+    // Extract numeric parts from existing PO numbers with branch prefix
+    // Handles formats like: PO-ABC-01, PO-ABC-1, PO-2024-0001 (legacy), etc.
+    const poNumbers = branchPOs
+      .map(po => {
+        const orderId = po.orderId || '';
+        // Match patterns: PO-XXX-NN or PO-XXX-N (branch prefix) or legacy formats
+        const branchPrefixMatch = orderId.match(new RegExp(`PO-${branchPrefix}-(\\d+)`));
+        if (branchPrefixMatch) {
+          return parseInt(branchPrefixMatch[1], 10);
+        }
+        // Also handle legacy formats for migration
+        const legacyMatch = orderId.match(/PO-(\d{4}-)?(\d+)/);
+        if (legacyMatch) {
+          return parseInt(legacyMatch[legacyMatch.length - 1], 10);
+        }
+        return 0;
+      })
+      .filter(num => !isNaN(num) && num > 0);
+
+    // Find the maximum number for this branch
+    const maxNumber = poNumbers.length > 0 ? Math.max(...poNumbers) : 0;
+    
+    // Increment and format with branch prefix
+    const nextNumber = maxNumber + 1;
+    return `PO-${branchPrefix}-${String(nextNumber).padStart(2, '0')}`;
+  };
+
   // Handle submit order
   const handleSubmitOrder = async (e) => {
     if (e) {
@@ -414,13 +457,13 @@ const PurchaseOrders = () => {
     setIsSubmitting(true);
     setError(null);
 
-      // Generate order ID
-    const orderId = `PO-${new Date().getFullYear()}-${String(purchaseOrders.length + 1).padStart(4, '0')}`;
-
       // Validate all required fields before creating document
     if (!userData?.branchId) {
       throw new Error('Branch ID is missing. Please refresh the page.');
     }
+
+      // Generate incremental order ID
+    const orderId = generateNextPONumber();
 
     if (!userData?.uid && !userData?.id) {
       throw new Error('User ID is missing. Please refresh the page.');

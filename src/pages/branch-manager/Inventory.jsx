@@ -46,6 +46,7 @@ import {
   Calendar
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatDate } from '../../utils/helpers';
 import { transactionApiService } from '../../services/transactionApiService';
 import { openaiService } from '../../services/openaiService';
 import { getAllServices } from '../../services/serviceManagementService';
@@ -199,29 +200,240 @@ const Inventory = () => {
       }
     });
 
-      // Fetch stock information
-    const stocksResult = await inventoryService.getBranchStocks(userData.branchId);
-    if (stocksResult.success) {
-      setStocks(stocksResult.stocks);
-    }
-
-      // Merge products with stock data
-    const mergedProducts = branchProducts.map(product => {
-      const stock = stocksResult.success 
-        ? stocksResult.stocks.find(s => s.productId === product.id)
-        : null;
+      // Fetch stock information from stocks collection (includes batch_stocks)
+      // Get all stocks for this branch - both regular stocks and batch_stocks
+      // Fetch by branchId only, then filter by status client-side to avoid index requirement
+      const stocksRef = collection(db, 'stocks');
+      const stocksQuery = query(
+        stocksRef,
+        where('branchId', '==', userData.branchId)
+      );
+      const stocksSnapshot = await getDocs(stocksQuery);
+      
+      // Aggregate stock by product (sum all batch stocks for each product)
+      // Filter by status client-side to avoid index requirement
+      const stockMap = new Map();
+      const productHasBatchStocks = new Set(); // Track which products have batch stocks
+      
+      // First pass: identify products that have batch stocks
+      stocksSnapshot.forEach((doc) => {
+        const stockData = doc.data();
+        const productId = stockData.productId;
+        const status = stockData.status || 'active';
+        const stockType = stockData.stockType || 'regular';
         
-      return {
+        if (productId && status === 'active' && stockType === 'batch') {
+          productHasBatchStocks.add(productId);
+        }
+      });
+      
+      // Second pass: aggregate stocks
+      // If product has batch stocks, only count batch stocks
+      // If product doesn't have batch stocks, count regular stocks
+      const arganStockRecords = []; // Debug array
+      const processedDocIds = new Set(); // Track processed documents to detect duplicates
+      
+      stocksSnapshot.forEach((doc) => {
+        // Check for duplicate document processing
+        if (processedDocIds.has(doc.id)) {
+          console.error('⚠️ DUPLICATE DOCUMENT DETECTED:', doc.id);
+          return;
+        }
+        processedDocIds.add(doc.id);
+        const stockData = doc.data();
+        const productId = stockData.productId;
+        const status = stockData.status || 'active';
+        const stockType = stockData.stockType || 'regular';
+        
+        // Only process active stocks
+        if (productId && status === 'active') {
+          // If product has batch stocks, only count batch stocks
+          // If product doesn't have batch stocks, only count regular stocks
+          const shouldCount = productHasBatchStocks.has(productId) 
+            ? stockType === 'batch' 
+            : stockType !== 'batch';
+          
+          if (!shouldCount) return;
+          
+          // IMPORTANT: Use realTimeStock, NOT beginningStock
+          // realTimeStock is the current available stock after sales/deductions
+          const realTimeStock = typeof stockData.realTimeStock === 'number' 
+            ? stockData.realTimeStock 
+            : Number(stockData.realTimeStock) || 0;
+          const beginningStock = typeof stockData.beginningStock === 'number'
+            ? stockData.beginningStock
+            : Number(stockData.beginningStock) || 0;
+          
+          // CRITICAL: Log exactly what we're reading
+          if (productId === 'mZorRF53mbG553ZUHDuU') {
+            console.log('🔍 Reading stock record:', {
+              stockId: doc.id,
+              realTimeStock: stockData.realTimeStock,
+              realTimeStockType: typeof stockData.realTimeStock,
+              realTimeStockConverted: realTimeStock,
+              beginningStock: stockData.beginningStock,
+              beginningStockConverted: beginningStock,
+              willUse: realTimeStock // This is what we're adding to total
+            });
+          }
+          
+          // Debug logging for ARGAN product
+          if (productId === 'mZorRF53mbG553ZUHDuU') {
+            arganStockRecords.push({
+              stockId: doc.id,
+              batchNumber: stockData.batchNumber || 'N/A',
+              stockType,
+              realTimeStock,
+              beginningStock,
+              shouldCount,
+              hasBatchStocks: productHasBatchStocks.has(productId),
+              rawData: {
+                realTimeStock: stockData.realTimeStock,
+                beginningStock: stockData.beginningStock,
+                status: stockData.status
+              }
+            });
+          }
+          
+          if (!stockMap.has(productId)) {
+            stockMap.set(productId, {
+              productId: productId,
+              totalStock: 0,
+              minStock: stockData.minStock || 0,
+              maxStock: stockData.maxStock || 0,
+              unitCost: stockData.unitCost || 0,
+              location: stockData.location || null,
+              expiryDate: stockData.expiryDate || null,
+              lastUpdated: stockData.updatedAt || stockData.lastUpdated || null
+            });
+          }
+          
+          // Sum ONLY realTimeStock from all batches for this product
+          const current = stockMap.get(productId);
+          const beforeAdd = current.totalStock;
+          current.totalStock += realTimeStock;
+          
+          // Debug: Log the addition
+          if (productId === 'mZorRF53mbG553ZUHDuU') {
+            console.log('➕ Adding to total:', {
+              before: beforeAdd,
+              adding: realTimeStock,
+              after: current.totalStock
+            });
+          }
+          
+          // Use the most recent minStock, maxStock, unitCost if available
+          if (stockData.minStock) current.minStock = stockData.minStock;
+          if (stockData.maxStock) current.maxStock = stockData.maxStock;
+          if (stockData.unitCost) current.unitCost = stockData.unitCost;
+        }
+      });
+      
+      // Debug: Log all ARGAN stock records and final total
+      if (arganStockRecords.length > 0) {
+        console.group('🔍 ARGAN Stock Aggregation Debug');
+        console.log('Stock records found:', arganStockRecords.length);
+        arganStockRecords.forEach((record, index) => {
+          console.log(`Record ${index + 1}:`, record);
+        });
+        const finalTotal = stockMap.get('mZorRF53mbG553ZUHDuU')?.totalStock || 0;
+        const sumOfRealTime = arganStockRecords.reduce((sum, r) => sum + r.realTimeStock, 0);
+        console.log('Sum of realTimeStock values:', sumOfRealTime);
+        console.log('Final aggregated totalStock:', finalTotal);
+        console.groupEnd();
+      }
+      
+      // Convert to array for backward compatibility
+      const aggregatedStocks = Array.from(stockMap.values());
+      setStocks(aggregatedStocks);
+
+      // Merge products with aggregated stock data
+    const mergedProducts = branchProducts.map(product => {
+      const stock = stockMap.get(product.id);
+      const totalStock = Number(stock?.totalStock) || 0;
+      const minStock = Number(stock?.minStock) || 0;
+      
+      // Debug for ARGAN
+      if (product.id === 'mZorRF53mbG553ZUHDuU') {
+        console.log('🔍 Merging ARGAN product:', {
+          productId: product.id,
+          stockFromMap: stock,
+          totalStock: totalStock,
+          totalStockType: typeof totalStock,
+          willSetCurrentStock: totalStock,
+          productBeforeMerge: {
+            name: product.name,
+            currentStock: product.currentStock,
+            unitCost: product.unitCost
+          }
+        });
+      }
+      
+      // Calculate status based on stock levels
+      let status = 'No Stock Data';
+      if (stock) {
+        if (totalStock > minStock) {
+          status = 'In Stock';
+        } else if (totalStock > 0) {
+          status = 'Low Stock';
+        } else {
+          status = 'Out of Stock';
+        }
+      }
+      
+      // Debug for ARGAN
+      if (product.id === 'mZorRF53mbG553ZUHDuU') {
+        console.log('📊 Status calculation for ARGAN:', {
+          totalStock,
+          minStock,
+          calculatedStatus: status,
+          hasStock: !!stock
+        });
+      }
+        
+      // Create merged product - explicitly override any stock fields from product object
+      const mergedProduct = {
         ...product,
-        currentStock: stock?.currentStock || 0,
-        minStock: stock?.minStock || 0,
+        // CRITICAL: Override any stock-related fields from product object
+        // Only use the aggregated totalStock from stocks collection
+        currentStock: totalStock,
+        stock: undefined, // Remove any stock field from product object
+        stockCount: undefined, // Remove any stockCount field
+        minStock: minStock,
         maxStock: stock?.maxStock || 0,
         unitCost: stock?.unitCost || product.unitCost || 0,
-        status: stock?.status || (stock ? 'In Stock' : 'No Stock Data'),
+        status: String(status), // CRITICAL: Ensure status is always a string
         lastUpdated: stock?.lastUpdated || null,
         location: stock?.location || null,
         expiryDate: stock?.expiryDate || null
       };
+      
+      // Remove any stock-related fields that might be in the product object
+      delete mergedProduct.stock;
+      delete mergedProduct.stockCount;
+      delete mergedProduct.totalStock;
+      
+      // CRITICAL: Ensure status is a string, not a number
+      if (typeof mergedProduct.status !== 'string') {
+        mergedProduct.status = String(mergedProduct.status || 'No Stock Data');
+      }
+      
+      // Debug for ARGAN - verify final merged product
+      if (product.id === 'mZorRF53mbG553ZUHDuU') {
+        console.log('✅ Final merged ARGAN product:', {
+          productId: mergedProduct.id,
+          name: mergedProduct.name,
+          currentStock: mergedProduct.currentStock,
+          currentStockType: typeof mergedProduct.currentStock,
+          unitCost: mergedProduct.unitCost,
+          status: mergedProduct.status,
+          statusType: typeof mergedProduct.status,
+          originalProductStatus: product.status,
+          originalProductStatusType: typeof product.status
+        });
+      }
+      
+      return mergedProduct;
     });
 
     setProducts(mergedProducts);
@@ -746,6 +958,49 @@ const Inventory = () => {
     return cleaned;
   };
 
+  // Generate next incremental PO number based on existing purchase orders for this branch
+  const generateNextPONumber = () => {
+    if (!userData?.branchId) {
+      throw new Error('Branch ID is required to generate PO number');
+    }
+
+    // Get first 3 characters of branch ID (uppercase)
+    const branchPrefix = userData.branchId.substring(0, 3).toUpperCase();
+    
+    // Filter POs for this branch only (should already be filtered, but double-check)
+    const branchPOs = purchaseOrders.filter(po => po.branchId === userData.branchId);
+    
+    if (!branchPOs || branchPOs.length === 0) {
+      return `PO-${branchPrefix}-${String(1).padStart(2, '0')}`;
+    }
+
+    // Extract numeric parts from existing PO numbers with branch prefix
+    // Handles formats like: PO-ABC-01, PO-ABC-1, PO-2024-0001 (legacy), etc.
+    const poNumbers = branchPOs
+      .map(po => {
+        const orderId = po.orderId || '';
+        // Match patterns: PO-XXX-NN or PO-XXX-N (branch prefix) or legacy formats
+        const branchPrefixMatch = orderId.match(new RegExp(`PO-${branchPrefix}-(\\d+)`));
+        if (branchPrefixMatch) {
+          return parseInt(branchPrefixMatch[1], 10);
+        }
+        // Also handle legacy formats for migration
+        const legacyMatch = orderId.match(/PO-(\d{4}-)?(\d+)/);
+        if (legacyMatch) {
+          return parseInt(legacyMatch[legacyMatch.length - 1], 10);
+        }
+        return 0;
+      })
+      .filter(num => !isNaN(num) && num > 0);
+
+    // Find the maximum number for this branch
+    const maxNumber = poNumbers.length > 0 ? Math.max(...poNumbers) : 0;
+    
+    // Increment and format with branch prefix
+    const nextNumber = maxNumber + 1;
+    return `PO-${branchPrefix}-${String(nextNumber).padStart(2, '0')}`;
+  };
+
   // Handle submit order
   const handleSubmitOrder = async (e) => {
     if (e) e.preventDefault();
@@ -774,11 +1029,12 @@ const Inventory = () => {
     setIsSubmitting(true);
     setErrorPO(null);
 
-    const orderId = `PO-${new Date().getFullYear()}-${String(purchaseOrders.length + 1).padStart(4, '0')}`;
-
     if (!userData?.branchId) {
       throw new Error('Branch ID is missing. Please refresh the page.');
     }
+
+    // Generate incremental order ID
+    const orderId = generateNextPONumber();
 
     if (!userData?.uid && !userData?.id) {
       throw new Error('User ID is missing. Please refresh the page.');
@@ -1458,7 +1714,18 @@ const Inventory = () => {
                         </td>
                       </tr>
                     ) : (
-                      filteredProducts.map((product) => (
+                      filteredProducts.map((product) => {
+                        // Debug: Log what we're about to display for ARGAN
+                        if (product.id === 'mZorRF53mbG553ZUHDuU') {
+                          console.log('🎨 Rendering ARGAN in table:', {
+                            productId: product.id,
+                            name: product.name,
+                            currentStock: product.currentStock,
+                            currentStockType: typeof product.currentStock,
+                            allProductKeys: Object.keys(product).filter(k => k.includes('stock') || k.includes('Stock'))
+                          });
+                        }
+                        return (
                 <tr key={product.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-4 px-4">
                     <div>
@@ -1472,15 +1739,31 @@ const Inventory = () => {
                           <td className="py-4 px-4 text-gray-700">{product.brand || '-'}</td>
                   <td className="py-4 px-4">
                     <div className="flex items-center">
-                              <span className="font-medium text-gray-900">{product.currentStock || 0}</span>
-                              {product.maxStock && (
-                      <span className="text-sm text-gray-500 ml-1">/ {product.maxStock}</span>
-                              )}
+                      <span className="font-medium text-gray-900">
+                        {Number(product.currentStock) || 0}
+                      </span>
+                      {product.maxStock > 0 && (
+                        <span className="text-sm text-gray-500 ml-1">/ {product.maxStock}</span>
+                      )}
                     </div>
                   </td>
                   <td className="py-4 px-4">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(product.status)}`}>
-                              {product.status || 'Unknown'}
+                              {(() => {
+                                const statusValue = product.status || 'Unknown';
+                                // Debug for ARGAN
+                                if (product.id === 'mZorRF53mbG553ZUHDuU') {
+                                  console.log('🔴 STATUS VALUE BEING RENDERED:', {
+                                    productId: product.id,
+                                    status: product.status,
+                                    statusType: typeof product.status,
+                                    statusValue: statusValue,
+                                    currentStock: product.currentStock,
+                                    minStock: product.minStock
+                                  });
+                                }
+                                return String(statusValue);
+                              })()}
                     </span>
                   </td>
                           <td className="py-4 px-4 text-gray-700">₱{(product.unitCost || 0).toFixed(2)}</td>
@@ -1513,16 +1796,20 @@ const Inventory = () => {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('View details clicked for product:', product);
                           setSelectedProduct(product);
-                                setShowDetailsModal(true);
-                              }}
-                            >
-                              <Eye className="h-3 w-3" />
+                          setShowDetailsModal(true);
+                        }}
+                      >
+                        <Eye className="h-3 w-3" />
                       </Button>
                   </td>
                 </tr>
-                      ))
+                        );
+                      })
                     )}
             </tbody>
           </table>
@@ -2689,21 +2976,21 @@ const Inventory = () => {
                   <div className="p-2 bg-white/20 rounded-lg">
                     <Eye className="h-6 w-6" />
                   </div>
-            <div>
+                  <div>
                     <h2 className="text-2xl font-bold">Product Details</h2>
                     <p className="text-white/80 text-sm mt-1">{selectedProduct.name}</p>
                   </div>
-            </div>
-              <Button
+                </div>
+                <Button
                   variant="ghost"
-                onClick={() => {
+                  onClick={() => {
                     setShowDetailsModal(false);
-                  setSelectedProduct(null);
-                }}
+                    setSelectedProduct(null);
+                  }}
                   className="text-white hover:bg-white/20 rounded-full p-2"
-              >
+                >
                   <X className="h-5 w-5" />
-              </Button>
+                </Button>
               </div>
             </div>
               
@@ -2777,7 +3064,7 @@ const Inventory = () => {
                   <div>
                     <p className="text-sm font-medium text-gray-500">Last Updated</p>
                     <p className="text-lg font-semibold text-gray-900">
-                      {format(new Date(selectedProduct.lastUpdated), 'MMM dd, yyyy HH:mm')}
+                      {formatDate(selectedProduct.lastUpdated, 'MMM dd, yyyy HH:mm')}
                     </p>
                   </div>
                 )}

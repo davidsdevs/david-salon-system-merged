@@ -21,26 +21,70 @@ import { db } from '../config/firebase';
  */
 export const getPriceHistory = async (serviceId, branchId) => {
   try {
-    const priceHistoryRef = collection(db, 'servicePriceHistory');
-    const q = query(
-      priceHistoryRef,
-      where('serviceId', '==', serviceId),
-      where('branchId', '==', branchId),
-      orderBy('changedAt', 'desc')
-    );
+    if (!serviceId || !branchId) {
+      console.error('Missing serviceId or branchId for price history query', { serviceId, branchId });
+      return [];
+    }
     
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => {
+    console.log('Fetching price history for:', { serviceId, branchId });
+    // Check both collection names for backward compatibility
+    const priceHistoryRef = collection(db, 'services_price_history');
+    
+    // Query all price history for this service and branch
+    // Try with orderBy first (requires composite index), fallback if needed
+    let snapshot;
+    try {
+      const q = query(
+        priceHistoryRef,
+        where('serviceId', '==', serviceId),
+        where('branchId', '==', branchId),
+        orderBy('changedAt', 'desc')
+      );
+      snapshot = await getDocs(q);
+    } catch (indexError) {
+      // If index error, try without orderBy and sort manually
+      console.warn('Index error (might need Firestore composite index), fetching without orderBy:', indexError);
+      const q = query(
+        priceHistoryRef,
+        where('serviceId', '==', serviceId),
+        where('branchId', '==', branchId)
+      );
+      snapshot = await getDocs(q);
+    }
+    
+    const history = [];
+    snapshot.forEach((doc) => {
       const data = doc.data();
-      return {
+      history.push({
         id: doc.id,
         ...data,
-        changedAt: data.changedAt?.toDate ? data.changedAt.toDate() : new Date(data.changedAt)
-      };
+        oldPrice: data.oldPrice !== undefined ? (typeof data.oldPrice === 'number' ? data.oldPrice : parseFloat(data.oldPrice) || 0) : 0,
+        newPrice: data.newPrice !== undefined ? (typeof data.newPrice === 'number' ? data.newPrice : parseFloat(data.newPrice) || 0) : 0,
+        changedAt: data.changedAt?.toDate ? data.changedAt.toDate() : (data.changedAt ? new Date(data.changedAt) : new Date())
+      });
     });
+    
+    // Sort manually by date (newest first)
+    history.sort((a, b) => {
+      const aTime = a.changedAt instanceof Date ? a.changedAt.getTime() : new Date(a.changedAt).getTime();
+      const bTime = b.changedAt instanceof Date ? b.changedAt.getTime() : new Date(b.changedAt).getTime();
+      return bTime - aTime;
+    });
+    
+    console.log(`Found ${history.length} price history records for service "${serviceId}" at branch "${branchId}"`);
+    if (history.length === 0) {
+      console.warn('No price history found. This could mean:');
+      console.warn('1. No price changes have been recorded yet');
+      console.warn('2. Price was set before history tracking was implemented');
+      console.warn('3. Query parameters might not match saved records');
+    }
+    
+    return history;
   } catch (error) {
     console.error('Error fetching price history:', error);
-    throw error;
+    console.error('Query parameters:', { serviceId, branchId });
+    // Return empty array instead of throwing to prevent UI crashes
+    return [];
   }
 };
 
@@ -81,15 +125,23 @@ export const getServiceSalesData = async (serviceId, branchId, startDate, endDat
       // Filter by date range
       if (transactionDate >= startDateObj && transactionDate <= endDateObj) {
         // Check if this transaction includes the service
-        const items = transaction.items || [];
-        items.forEach(item => {
-          // Match by serviceId or id field, and ensure it's a service (not a product)
-          const isService = item.type === 'service' || (!item.type && !item.productId);
-          const matchesService = item.serviceId === serviceId || item.id === serviceId;
+        // Transactions have a 'services' array (primary), but may also have 'items' for compatibility
+        const servicesArray = transaction.services || [];
+        const itemsArray = transaction.items || [];
+        const allServices = servicesArray.length > 0 ? servicesArray : itemsArray;
+        
+        allServices.forEach(service => {
+          // Match by serviceId field
+          const matchesService = service.serviceId === serviceId || service.id === serviceId;
+          
+          // Ensure it's a service (not a product) - services don't have productId
+          const isService = !service.productId && (service.serviceId || service.id);
           
           if (isService && matchesService) {
-            const quantity = item.quantity || 1;
-            const price = item.price || item.adjustedPrice || item.basePrice || 0;
+            const quantity = service.quantity || 1;
+            // Get price from various possible fields (prioritize adjustedPrice for accuracy)
+            const price = service.adjustedPrice || service.price || service.basePrice || 
+                         service.servicePrice || service.total || 0;
             
             totalQuantity += quantity;
             totalRevenue += price * quantity;
@@ -227,14 +279,22 @@ export const getTransactionsForPricePeriod = async (
       // Filter by date range
       if (transactionDate >= startDateObj && transactionDate <= endDateObj) {
         // Check if this transaction includes the service
-        const items = transaction.items || [];
-        items.forEach(item => {
-          // Match by serviceId or id field, and ensure it's a service (not a product)
-          const isService = item.type === 'service' || (!item.type && !item.productId);
-          const matchesService = item.serviceId === serviceId || item.id === serviceId;
+        // Transactions have a 'services' array (primary), but may also have 'items' for compatibility
+        const servicesArray = transaction.services || [];
+        const itemsArray = transaction.items || [];
+        const allServices = servicesArray.length > 0 ? servicesArray : itemsArray;
+        
+        allServices.forEach(service => {
+          // Match by serviceId field
+          const matchesService = service.serviceId === serviceId || service.id === serviceId;
+          
+          // Ensure it's a service (not a product) - services don't have productId
+          const isService = !service.productId && (service.serviceId || service.id);
           
           if (isService && matchesService) {
-            const itemPrice = item.price || item.adjustedPrice || item.basePrice || 0;
+            // Get price from various possible fields (prioritize adjustedPrice for accuracy)
+            const itemPrice = service.adjustedPrice || service.price || service.basePrice || 
+                             service.servicePrice || service.total || 0;
             
             // If price filter is provided, check if it matches (allow 1 peso variance for rounding)
             if (price === null || Math.abs(itemPrice - price) <= 1) {
@@ -242,16 +302,16 @@ export const getTransactionsForPricePeriod = async (
                 id: doc.id,
                 transactionId: doc.id,
                 transactionDate,
-                clientName: transaction.clientName || 'Walk-in',
+                clientName: transaction.clientInfo?.name || transaction.clientName || 'Walk-in',
                 clientId: transaction.clientId || null,
-                itemName: item.name || 'Unknown Service',
+                itemName: service.serviceName || service.name || 'Unknown Service',
                 itemPrice,
-                quantity: item.quantity || 1,
+                quantity: service.quantity || 1,
                 subtotal: transaction.subtotal || 0,
                 discount: transaction.discount || 0,
-                total: transaction.total || 0,
+                total: transaction.total || transaction.totalAmount || 0,
                 paymentMethod: transaction.paymentMethod || 'cash',
-                stylistName: item.stylistName || transaction.stylistName || 'N/A',
+                stylistName: service.stylistName || transaction.stylistName || 'N/A',
                 appointmentId: transaction.appointmentId || null,
                 createdAt: transactionDate
               });

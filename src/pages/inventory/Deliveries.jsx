@@ -282,6 +282,10 @@ const Deliveries = () => {
         branchId: userData.branchId,
         supplierId: selectedOrder.supplierId,
         supplierName: selectedOrder.supplierName,
+        receivedBy: userData.uid || userData.id,
+        receivedByName: (userData.firstName && userData.lastName 
+          ? `${userData.firstName} ${userData.lastName}`.trim() 
+          : (userData.email || 'Unknown')),
         items: selectedOrder.items.map(item => {
           const orderedQty = item.quantity || 0;
           const receivedQty = receivedQuantities[item.productId] || 0;
@@ -1216,7 +1220,6 @@ const Deliveries = () => {
                       <thead className="bg-gray-50">
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
                           <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Quantity</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expiration Date</th>
                         </tr>
@@ -1227,9 +1230,6 @@ const Deliveries = () => {
                             <tr key={item.productId || index} className="hover:bg-gray-50">
                               <td className="px-4 py-3">
                                 <div className="font-medium text-gray-900">{item.productName}</div>
-                              </td>
-                              <td className="px-4 py-3">
-                                <div className="text-sm text-gray-500">{item.sku || 'N/A'}</div>
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <div className="text-gray-900 font-medium">{item.quantity}</div>
@@ -1257,7 +1257,7 @@ const Deliveries = () => {
                           ))
                         ) : (
                           <tr>
-                            <td colSpan="4" className="px-4 py-4 text-center text-gray-500">No items</td>
+                            <td colSpan="3" className="px-4 py-4 text-center text-gray-500">No items</td>
                           </tr>
                         )}
                       </tbody>

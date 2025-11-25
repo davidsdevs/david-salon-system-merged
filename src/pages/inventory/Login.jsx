@@ -122,3 +122,7 @@ const InventoryControllerLogin = () => {
 
 export default InventoryControllerLogin;
 
+
+
+
+

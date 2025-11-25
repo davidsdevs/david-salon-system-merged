@@ -488,6 +488,7 @@ class InventoryService {
     try {
       const batch = writeBatch(db);
       const batches = [];
+      const batchStocks = [];
 
       // deliveryData should contain:
       // - purchaseOrderId
@@ -530,13 +531,62 @@ class InventoryService {
 
         batch.set(batchRef, batchData);
         batches.push({ id: batchRef.id, ...batchData });
+
+        // Create batch_stock entry in stocks collection for FIFO tracking
+        // This allows weekly REALCOUNTSTOCK tracking per batch
+        const batchStockRef = doc(collection(db, 'stocks'));
+        const batchQuantity = Number(item.quantity);
+        const currentDate = new Date();
+        const startPeriod = Timestamp.fromDate(currentDate);
+        
+        // Calculate end period (4 weeks from now for monthly tracking)
+        const endPeriodDate = new Date(currentDate);
+        endPeriodDate.setDate(endPeriodDate.getDate() + 28); // 4 weeks
+        const endPeriod = Timestamp.fromDate(endPeriodDate);
+
+        const batchStockData = {
+          batchId: batchRef.id, // Reference to the product_batch
+          batchNumber: batchNumber, // For easy reference
+          productId: String(item.productId),
+          productName: String(item.productName || ''),
+          branchId: String(deliveryData.branchId),
+          purchaseOrderId: String(deliveryData.purchaseOrderId || ''),
+          beginningStock: batchQuantity, // Initial quantity from this batch
+          startPeriod: startPeriod,
+          weekTrackingMode: 'manual', // Manual recording of weekly counts
+          weekOneStock: 0, // Will be recorded weekly
+          weekTwoStock: 0,
+          weekThreeStock: 0,
+          weekFourStock: 0,
+          endPeriod: endPeriod,
+          endStockMode: 'auto', // Always automatic
+          endStock: 0, // Will be calculated
+          realTimeStock: batchQuantity, // Starts equal to beginningStock, will be updated as stock is used
+          expirationDate: expirationDate, // Link to batch expiration
+          receivedDate: receivedDate, // When batch was received
+          receivedBy: String(deliveryData.receivedBy || ''),
+          receivedByName: String(deliveryData.receivedByName || ''),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdBy: String(deliveryData.receivedBy || ''),
+          status: 'active',
+          stockType: 'batch' // Indicates this is a batch_stock entry
+        };
+
+        batch.set(batchStockRef, batchStockData);
+        batchStocks.push({ id: batchStockRef.id, batchId: batchRef.id, ...batchStockData });
       }
 
       await batch.commit();
-      return { success: true, batches, message: `Created ${batches.length} product batches` };
+      return { 
+        success: true, 
+        batches, 
+        batchStocks,
+        message: `Created ${batches.length} product batches and ${batchStocks.length} batch stock entries` 
+      };
     } catch (error) {
       console.error('Error creating product batches:', error);
-      return { success: false, message: error.message, batches: [] };
+      return { success: false, message: error.message, batches: [], batchStocks: [] };
     }
   }
 
@@ -649,6 +699,64 @@ class InventoryService {
   }
 
   /**
+   * Get batches for sale (FIFO selection without deduction)
+   * Returns which batches should be used for a sale/transaction
+   * @param {Object} saleData - { branchId, productId, quantity }
+   * @returns {Object} - { success, batches: [{ batchId, batchNumber, quantity, expirationDate, ... }] }
+   */
+  async getBatchesForSale(saleData) {
+    try {
+      const { branchId, productId, quantity } = saleData;
+      let remainingNeeded = Number(quantity);
+
+      // Get all active batches for this product, sorted by expiration date (FIFO)
+      const batchesResult = await this.getProductBatches(branchId, productId, { status: 'active' });
+      if (!batchesResult.success || batchesResult.batches.length === 0) {
+        return { success: false, message: 'No active batches found for this product', batches: [] };
+      }
+
+      const batchesForSale = [];
+
+      // Select batches in FIFO order
+      for (const batchRecord of batchesResult.batches) {
+        if (remainingNeeded <= 0) break;
+
+        const availableInBatch = batchRecord.remainingQuantity || 0;
+        if (availableInBatch <= 0) continue;
+
+        const quantityFromBatch = Math.min(remainingNeeded, availableInBatch);
+        remainingNeeded -= quantityFromBatch;
+
+        batchesForSale.push({
+          batchId: batchRecord.id,
+          batchNumber: batchRecord.batchNumber,
+          quantity: quantityFromBatch,
+          expirationDate: batchRecord.expirationDate,
+          unitCost: batchRecord.unitCost,
+          remainingQuantity: availableInBatch // Current remaining before sale
+        });
+      }
+
+      if (remainingNeeded > 0) {
+        return { 
+          success: false, 
+          message: `Insufficient stock. Only ${quantity - remainingNeeded} units available.`,
+          batches: batchesForSale
+        };
+      }
+
+      return { 
+        success: true, 
+        batches: batchesForSale,
+        message: `Found ${batchesForSale.length} batch(es) for sale`
+      };
+    } catch (error) {
+      console.error('Error getting batches for sale:', error);
+      return { success: false, message: error.message, batches: [] };
+    }
+  }
+
+  /**
    * Get batches for transfer (FIFO selection without deduction)
    * Returns which batches should be used for a transfer
    * @param {Object} transferData - { branchId, productId, quantity }
@@ -708,24 +816,66 @@ class InventoryService {
 
   /**
    * Deduct stock using FIFO (First In First Out) - oldest batches first
-   * @param {Object} deductionData - { branchId, productId, quantity, reason, notes, createdBy }
+   * @param {Object} deductionData - { branchId, productId, quantity, reason, notes, createdBy, batches? }
+   * @param {Array} deductionData.batches - Optional: Pre-determined batches to use (from transaction/transfer)
    */
   async deductStockFIFO(deductionData) {
     try {
-      const { branchId, productId, quantity } = deductionData;
+      const { branchId, productId, quantity, batches: providedBatches } = deductionData;
       let remainingToDeduct = Number(quantity);
-
-      // Get all active batches for this product, sorted by expiration date (FIFO)
-      const batchesResult = await this.getProductBatches(branchId, productId, { status: 'active' });
-      if (!batchesResult.success || batchesResult.batches.length === 0) {
-        return { success: false, message: 'No active batches found for this product' };
-      }
 
       const batch = writeBatch(db);
       const updatedBatches = [];
+      let batchesToUse = [];
+
+      // If batches are provided (from transaction/transfer), use those
+      // Otherwise, get all active batches for this product, sorted by expiration date (FIFO)
+      if (providedBatches && providedBatches.length > 0) {
+        // Use provided batches - need to get full batch records from product_batches
+        const batchIds = providedBatches.map(b => b.batchId || b.id).filter(Boolean);
+        if (batchIds.length > 0) {
+          const batchPromises = batchIds.map(batchId => 
+            getDoc(doc(db, this.productBatchesCollection, batchId))
+          );
+          const batchDocs = await Promise.all(batchPromises);
+          batchesToUse = batchDocs
+            .filter(doc => doc.exists())
+            .map(doc => ({
+              id: doc.id,
+              ...doc.data(),
+              expirationDate: doc.data().expirationDate?.toDate ? doc.data().expirationDate.toDate() : 
+                             doc.data().expirationDate instanceof Date ? doc.data().expirationDate :
+                             doc.data().expirationDate ? new Date(doc.data().expirationDate) : null,
+              receivedDate: doc.data().receivedDate?.toDate ? doc.data().receivedDate.toDate() : 
+                           doc.data().receivedDate instanceof Date ? doc.data().receivedDate :
+                           doc.data().receivedDate ? new Date(doc.data().receivedDate) : new Date(),
+            }))
+            .sort((a, b) => {
+              // Sort by expiration date (FIFO)
+              if (a.expirationDate && b.expirationDate) {
+                return a.expirationDate.getTime() - b.expirationDate.getTime();
+              }
+              if (a.expirationDate) return -1;
+              if (b.expirationDate) return 1;
+              // Then by received date
+              return a.receivedDate.getTime() - b.receivedDate.getTime();
+            });
+        }
+      } else {
+        // Get all active batches for this product, sorted by expiration date (FIFO)
+        const batchesResult = await this.getProductBatches(branchId, productId, { status: 'active' });
+        if (!batchesResult.success || batchesResult.batches.length === 0) {
+          return { success: false, message: 'No active batches found for this product' };
+        }
+        batchesToUse = batchesResult.batches;
+      }
+
+      if (batchesToUse.length === 0) {
+        return { success: false, message: 'No batches available for deduction' };
+      }
 
       // Deduct from batches in FIFO order
-      for (const batchRecord of batchesResult.batches) {
+      for (const batchRecord of batchesToUse) {
         if (remainingToDeduct <= 0) break;
 
         const availableInBatch = batchRecord.remainingQuantity || 0;
@@ -735,14 +885,53 @@ class InventoryService {
         const newRemaining = availableInBatch - deductFromBatch;
         remainingToDeduct -= deductFromBatch;
 
+        // Update product_batch (batch definition)
         const batchRef = doc(db, this.productBatchesCollection, batchRecord.id);
         const updateData = {
           remainingQuantity: newRemaining,
           status: newRemaining <= 0 ? 'depleted' : 'active',
           updatedAt: serverTimestamp()
         };
-
         batch.update(batchRef, updateData);
+
+        // CRITICAL: Also update the batch_stock in stocks collection
+        // Find the batch_stock document by batchId
+        // Note: We query without stockType filter first to avoid index issues, then filter client-side
+        const batchStockQuery = query(
+          collection(db, 'stocks'),
+          where('batchId', '==', batchRecord.id),
+          where('branchId', '==', branchId)
+        );
+        const batchStockSnap = await getDocs(batchStockQuery);
+        
+        // Filter client-side for stockType and status
+        const batchStockDoc = batchStockSnap.docs.find(doc => {
+          const data = doc.data();
+          return (data.stockType === 'batch' || data.batchId) && (data.status === 'active' || !data.status);
+        });
+        
+        if (batchStockDoc) {
+          const batchStockRef = batchStockDoc.ref;
+          const batchStockData = batchStockDoc.data();
+          const currentRealTimeStock = Number(batchStockData.realTimeStock) || 0;
+          const newRealTimeStock = Math.max(0, currentRealTimeStock - deductFromBatch);
+          
+          console.log(`📦 Updating batch_stock: ${batchRecord.batchNumber}`, {
+            batchId: batchRecord.id,
+            stockId: batchStockDoc.id,
+            currentRealTimeStock,
+            deducting: deductFromBatch,
+            newRealTimeStock
+          });
+          
+          batch.update(batchStockRef, {
+            realTimeStock: newRealTimeStock,
+            updatedAt: serverTimestamp()
+          });
+        } else {
+          console.warn(`⚠️ Batch stock not found for batchId: ${batchRecord.id}, batchNumber: ${batchRecord.batchNumber}`);
+        }
+
         updatedBatches.push({
           batchId: batchRecord.id,
           batchNumber: batchRecord.batchNumber,
@@ -1030,7 +1219,12 @@ class InventoryService {
 
   /**
    * Return stock to original batch (for returned transfers)
-   * @param {Object} returnData - { batchId, quantity, returnReason, returnedBy, returnedAt }
+   * Handles three scenarios:
+   * 1. Original batch exists → Restore to original batch
+   * 2. Original batch was sold/depleted → Create return batch at original branch
+   * 3. New products returned (different from transferred) → Create new batch at original branch
+   * 
+   * @param {Object} returnData - { batchId, quantity, returnReason, returnedBy, returnedAt, isNewProduct?, newProductData? }
    */
   async returnStockToBatch(returnData) {
     try {
@@ -1057,49 +1251,83 @@ class InventoryService {
       }
 
       const batch = writeBatch(db);
+      const { isNewProduct = false, newProductData = null } = returnData;
       
-      // Try to restore to original batch
-      const originalBatchRef = doc(db, this.productBatchesCollection, transferBatch.originalBatchId);
-      const originalBatchDoc = await getDoc(originalBatchRef);
-      
-      if (originalBatchDoc.exists()) {
-        // Original batch exists - restore quantity
-        const originalBatch = originalBatchDoc.data();
-        const newRemaining = (originalBatch.remainingQuantity || 0) + quantity;
+      // SCENARIO 3: New products returned (different from what was transferred)
+      if (isNewProduct && newProductData) {
+        // Create a new batch at the original branch with the new product data
+        const newBatchNumber = `RET-NEW-${transferBatch.originalBatchNumber || 'BATCH'}-${Date.now()}`;
+        const newBatchRef = doc(collection(db, this.productBatchesCollection));
         
-        batch.update(originalBatchRef, {
-          remainingQuantity: newRemaining,
-          status: newRemaining > 0 ? 'active' : originalBatch.status,
-          updatedAt: serverTimestamp()
-        });
-      } else {
-        // Original batch doesn't exist - create a return batch
-        const returnBatchNumber = `RET-${transferBatch.originalBatchNumber || 'BATCH'}-${Date.now()}`;
-        const returnBatchRef = doc(collection(db, this.productBatchesCollection));
-        
-        batch.set(returnBatchRef, {
-          batchNumber: returnBatchNumber,
-          productId: transferBatch.productId,
-          productName: transferBatch.productName,
+        batch.set(newBatchRef, {
+          batchNumber: newBatchNumber,
+          productId: newProductData.productId || transferBatch.productId,
+          productName: newProductData.productName || transferBatch.productName,
           branchId: transferBatch.fromBranchId, // Return to original branch
-          sourceType: 'return',
+          sourceType: 'return_new',
           sourceTransferId: transferBatch.sourceTransferId,
           originalBatchId: transferBatch.originalBatchId,
           originalBatchNumber: transferBatch.originalBatchNumber,
           quantity: quantity,
           remainingQuantity: quantity,
-          unitCost: transferBatch.unitCost,
-          expirationDate: transferBatch.expirationDate,
+          unitCost: newProductData.unitCost || transferBatch.unitCost,
+          expirationDate: newProductData.expirationDate || transferBatch.expirationDate,
           receivedDate: returnData.returnedAt 
             ? Timestamp.fromDate(new Date(returnData.returnedAt)) 
             : serverTimestamp(),
           receivedBy: String(returnData.returnedBy || ''),
           fromBranchId: transferBatch.branchId, // Branch returning the stock
-          returnReason: String(returnData.returnReason || ''),
+          returnReason: String(returnData.returnReason || 'New product returned (original was sold)'),
+          notes: `Original transferred products were sold. New products returned instead.`,
           status: 'active',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+      } else {
+        // SCENARIO 1 & 2: Try to restore to original batch
+        const originalBatchRef = doc(db, this.productBatchesCollection, transferBatch.originalBatchId);
+        const originalBatchDoc = await getDoc(originalBatchRef);
+        
+        if (originalBatchDoc.exists()) {
+          // SCENARIO 1: Original batch exists - restore quantity
+          const originalBatch = originalBatchDoc.data();
+          const newRemaining = (originalBatch.remainingQuantity || 0) + quantity;
+          
+          batch.update(originalBatchRef, {
+            remainingQuantity: newRemaining,
+            status: newRemaining > 0 ? 'active' : originalBatch.status,
+            updatedAt: serverTimestamp()
+          });
+        } else {
+          // SCENARIO 2: Original batch was sold/depleted - create return batch
+          const returnBatchNumber = `RET-${transferBatch.originalBatchNumber || 'BATCH'}-${Date.now()}`;
+          const returnBatchRef = doc(collection(db, this.productBatchesCollection));
+          
+          batch.set(returnBatchRef, {
+            batchNumber: returnBatchNumber,
+            productId: transferBatch.productId,
+            productName: transferBatch.productName,
+            branchId: transferBatch.fromBranchId, // Return to original branch
+            sourceType: 'return',
+            sourceTransferId: transferBatch.sourceTransferId,
+            originalBatchId: transferBatch.originalBatchId,
+            originalBatchNumber: transferBatch.originalBatchNumber,
+            quantity: quantity,
+            remainingQuantity: quantity,
+            unitCost: transferBatch.unitCost,
+            expirationDate: transferBatch.expirationDate,
+            receivedDate: returnData.returnedAt 
+              ? Timestamp.fromDate(new Date(returnData.returnedAt)) 
+              : serverTimestamp(),
+            receivedBy: String(returnData.returnedBy || ''),
+            fromBranchId: transferBatch.branchId, // Branch returning the stock
+            returnReason: String(returnData.returnReason || 'Original batch was sold/depleted'),
+            notes: `Original batch ${transferBatch.originalBatchNumber} was sold or depleted. Stock returned as new batch.`,
+            status: 'active',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        }
       }
 
       // Update transfer batch (reduce remaining quantity)

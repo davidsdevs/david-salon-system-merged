@@ -12,7 +12,7 @@ import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import {
   TrendingUp,
   TrendingDown,
-  DollarSign,
+  Banknote,
   ShoppingCart,
   Calendar,
   Search,
@@ -20,7 +20,14 @@ import {
   BarChart3,
   ArrowUp,
   ArrowDown,
-  Minus
+  Minus,
+  Activity,
+  TrendingUp as TrendingUpIcon,
+  TrendingDown as TrendingDownIcon,
+  X,
+  User,
+  Clock,
+  Tag
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
@@ -189,24 +196,37 @@ const PriceHistoryAnalytics = () => {
   };
 
   const formatCurrency = (amount) => {
-    return `Γé▒${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (typeof amount !== 'number' || isNaN(amount)) return '₱0.00';
+    return `₱${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Price History Analytics</h1>
-        <p className="text-gray-600">Track service price changes and their impact on sales</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 bg-gradient-to-br from-[#160B53] to-[#3B2E7A] rounded-lg">
+              <BarChart3 className="h-6 w-6 text-white" />
+            </div>
+            <h1 className="text-3xl font-bold text-gray-900">Price History Analytics</h1>
+          </div>
+          <p className="text-gray-600 ml-[52px]">Track service price changes and analyze their impact on sales performance</p>
+        </div>
       </div>
 
       {/* Selection Card */}
-      <Card className="p-6">
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <Card className="p-6 shadow-lg border border-gray-200">
+        <div className="space-y-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Tag className="h-5 w-5 text-[#160B53]" />
+            <h2 className="text-lg font-semibold text-gray-900">Service & Branch Selection</h2>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Service Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <div className="space-y-2">
+              <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <Activity className="h-4 w-4" />
                 Select Service
               </label>
               <div className="space-y-2">
@@ -217,13 +237,13 @@ const PriceHistoryAnalytics = () => {
                     placeholder="Search services..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10"
+                    className="pl-10 border-gray-300 focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53]"
                   />
                 </div>
                 <select
                   value={selectedServiceId}
                   onChange={(e) => setSelectedServiceId(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53]"
+                  className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53] bg-white transition-all hover:border-gray-400"
                 >
                   <option value="">-- Select Service --</option>
                   {filteredServices.map(service => (
@@ -236,14 +256,15 @@ const PriceHistoryAnalytics = () => {
             </div>
 
             {/* Branch Selection */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <div className="space-y-2">
+              <label className="block text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                <Calendar className="h-4 w-4" />
                 Select Branch
               </label>
               <select
                 value={selectedBranchId}
                 onChange={(e) => setSelectedBranchId(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53]"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53] bg-white transition-all hover:border-gray-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
                 disabled={!selectedServiceId}
               >
                 <option value="">-- Select Branch --</option>
@@ -257,18 +278,27 @@ const PriceHistoryAnalytics = () => {
           </div>
 
           {selectedService && selectedBranch && (
-            <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+            <div className="mt-4 p-5 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 shadow-sm">
               <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-700">Selected:</p>
-                  <p className="text-lg font-semibold text-gray-900">
-                    {selectedService.name} at {selectedBranch.name || selectedBranch.branchName}
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-2">Selected Service</p>
+                  <p className="text-xl font-bold text-gray-900 mb-1">
+                    {selectedService.name}
+                  </p>
+                  <p className="text-sm text-gray-600 mb-3">
+                    at {selectedBranch.name || selectedBranch.branchName}
                   </p>
                   {selectedService.branchPricing?.[selectedBranchId] && (
-                    <p className="text-sm text-gray-600 mt-1">
-                      Current Price: {formatCurrency(selectedService.branchPricing[selectedBranchId])}
-                    </p>
+                    <div className="flex items-center gap-2 mt-2">
+                      <Banknote className="h-5 w-5 text-green-600" />
+                      <p className="text-base font-semibold text-green-700">
+                        Current Price: {formatCurrency(selectedService.branchPricing[selectedBranchId])}
+                      </p>
+                    </div>
                   )}
+                </div>
+                <div className="ml-4 p-3 bg-white rounded-lg shadow-sm border border-blue-100">
+                  <Tag className="h-8 w-8 text-[#160B53]" />
                 </div>
               </div>
             </div>
@@ -284,43 +314,57 @@ const PriceHistoryAnalytics = () => {
               <LoadingSpinner />
             </div>
           ) : priceHistory.length === 0 ? (
-            <Card className="p-6">
+            <Card className="p-12 shadow-lg border-2 border-gray-200">
               <div className="text-center py-8">
-                <AlertCircle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">No Price History</h3>
-                <p className="text-gray-600">
-                  No price changes have been recorded for this service at this branch.
+                <div className="mx-auto w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
+                  <AlertCircle className="h-10 w-10 text-gray-400" />
+                </div>
+                <h3 className="text-2xl font-bold text-gray-900 mb-3">No Price History</h3>
+                <p className="text-gray-600 text-lg max-w-md mx-auto">
+                  No price changes have been recorded for this service at this branch yet.
+                </p>
+                <p className="text-sm text-gray-500 mt-2">
+                  Price history will appear here once changes are made.
                 </p>
               </div>
             </Card>
           ) : (
-            <Card className="overflow-hidden">
-              <div className="p-6 border-b border-gray-200">
-                <h2 className="text-xl font-semibold text-gray-900">Price Change History</h2>
-                <p className="text-sm text-gray-600 mt-1">
-                  Click on any price change to view sales impact analysis
+            <Card className="overflow-hidden shadow-lg border border-gray-200">
+              <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-gray-100">
+                <div className="flex items-center gap-3 mb-2">
+                  <Activity className="h-5 w-5 text-[#160B53]" />
+                  <h2 className="text-xl font-bold text-gray-900">Price Change History</h2>
+                </div>
+                <p className="text-sm text-gray-600 ml-8">
+                  Click on any price change to view detailed sales impact analysis
                 </p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-gradient-to-r from-gray-800 to-gray-700">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Date Changed
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4" />
+                          Date Changed
+                        </div>
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
                         Old Price
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
                         New Price
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
                         Change
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Changed By
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4" />
+                          Changed By
+                        </div>
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="px-6 py-4 text-left text-xs font-semibold text-white uppercase tracking-wider">
                         Actions
                       </th>
                     </tr>
@@ -331,28 +375,35 @@ const PriceHistoryAnalytics = () => {
                       const isIncrease = change.newPrice > change.oldPrice;
                       
                       return (
-                        <tr key={change.id} className="hover:bg-gray-50">
+                        <tr key={change.id} className="hover:bg-blue-50 transition-colors duration-150">
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm text-gray-900">
-                              {format(change.changedAt, 'MMM dd, yyyy')}
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              {format(change.changedAt, 'hh:mm a')}
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-4 w-4 text-gray-400" />
+                              <div>
+                                <div className="text-sm font-semibold text-gray-900">
+                                  {format(change.changedAt, 'MMM dd, yyyy')}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {format(change.changedAt, 'hh:mm a')}
+                                </div>
+                              </div>
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm font-medium text-gray-900">
+                            <div className="text-sm font-semibold text-gray-700">
                               {formatCurrency(change.oldPrice)}
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm font-medium text-gray-900">
+                            <div className="text-sm font-bold text-[#160B53]">
                               {formatCurrency(change.newPrice)}
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className={`flex items-center gap-1 text-sm font-medium ${
-                              isIncrease ? 'text-red-600' : 'text-green-600'
+                            <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold ${
+                              isIncrease 
+                                ? 'bg-red-100 text-red-700 border border-red-200' 
+                                : 'bg-green-100 text-green-700 border border-green-200'
                             }`}>
                               {isIncrease ? (
                                 <ArrowUp className="h-4 w-4" />
@@ -361,45 +412,48 @@ const PriceHistoryAnalytics = () => {
                               )}
                               {Math.abs(changePercent).toFixed(1)}%
                             </div>
-                            <div className="text-xs text-gray-500">
+                            <div className="text-xs text-gray-500 mt-1">
                               {formatCurrency(Math.abs(change.newPrice - change.oldPrice))}
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="text-sm text-gray-900">
-                              {change.changedByName || 'Unknown'}
+                            <div className="flex items-center gap-2">
+                              <User className="h-4 w-4 text-gray-400" />
+                              <span className="text-sm font-medium text-gray-900">
+                                {change.changedByName || 'Unknown'}
+                              </span>
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() => loadImpactAnalysis(change)}
-                                className="flex items-center gap-2"
+                                className="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 hover:text-blue-800"
                               >
                                 <BarChart3 className="h-4 w-4" />
-                                View Impact
+                                Impact
                               </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() => loadTransactionsForPeriod(change, 'old')}
-                                className="flex items-center gap-2"
+                                className="flex items-center gap-2 bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-700"
                                 title="View transactions with old price"
                               >
                                 <ShoppingCart className="h-4 w-4" />
-                                Old Price
+                                Old
                               </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() => loadTransactionsForPeriod(change, 'new')}
-                                className="flex items-center gap-2"
+                                className="flex items-center gap-2 bg-green-50 hover:bg-green-100 border-green-200 text-green-700"
                                 title="View transactions with new price"
                               >
                                 <ShoppingCart className="h-4 w-4" />
-                                New Price
+                                New
                               </Button>
                             </div>
                           </td>
@@ -414,13 +468,22 @@ const PriceHistoryAnalytics = () => {
 
           {/* Impact Analysis */}
           {impactData && (
-            <Card className="p-6">
-              <div className="mb-6">
-                <h2 className="text-xl font-semibold text-gray-900 mb-2">Sales Impact Analysis</h2>
-                <p className="text-sm text-gray-600">
-                  Comparing sales 30 days before and after the price change on{' '}
-                  {format(impactData.priceChange.changedAt, 'MMM dd, yyyy')}
-                </p>
+            <Card className="p-6 shadow-lg border border-gray-200">
+              <div className="mb-6 pb-4 border-b border-gray-200">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="p-2 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg">
+                    <TrendingUpIcon className="h-5 w-5 text-white" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-900">Sales Impact Analysis</h2>
+                    <p className="text-sm text-gray-600 mt-1">
+                      Comparing sales 30 days before and after the price change on{' '}
+                      <span className="font-semibold text-[#160B53]">
+                        {format(impactData.priceChange.changedAt, 'MMM dd, yyyy')}
+                      </span>
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {loadingImpact ? (
@@ -430,156 +493,144 @@ const PriceHistoryAnalytics = () => {
               ) : (
                 <div className="space-y-6">
                   {/* Summary Cards */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <Card className="p-4 bg-blue-50 border-blue-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Quantity Sold</p>
-                          <p className="text-2xl font-bold text-gray-900 mt-1">
-                            {impactData.changes.quantityChange > 0 ? (
-                              <span className="text-red-600">
-                                <TrendingUp className="inline h-5 w-5 mr-1" />
-                                {impactData.changes.quantityChange.toFixed(1)}%
-                              </span>
-                            ) : impactData.changes.quantityChange < 0 ? (
-                              <span className="text-green-600">
-                                <TrendingDown className="inline h-5 w-5 mr-1" />
-                                {Math.abs(impactData.changes.quantityChange).toFixed(1)}%
-                              </span>
-                            ) : (
-                              <span className="text-gray-600">
-                                <Minus className="inline h-5 w-5 mr-1" />
-                                0%
-                              </span>
-                            )}
-                          </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <Card className="p-6 bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-200 shadow-md hover:shadow-lg transition-shadow">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="p-3 bg-green-500 rounded-xl">
+                          <Banknote className="h-6 w-6 text-white" />
                         </div>
                       </div>
-                      <div className="mt-4 pt-4 border-t border-blue-200">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">Before: {impactData.before.totalQuantity}</span>
-                          <span className="text-gray-600">After: {impactData.after.totalQuantity}</span>
-                        </div>
+                      <div>
+                        <p className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Revenue Change</p>
+                        <p className="text-3xl font-bold text-gray-900 mb-4">
+                          {impactData.changes.revenueChange > 0 ? (
+                            <span className="text-green-600 flex items-center gap-2">
+                              <TrendingUp className="h-6 w-6" />
+                              +{impactData.changes.revenueChange.toFixed(1)}%
+                            </span>
+                          ) : impactData.changes.revenueChange < 0 ? (
+                            <span className="text-red-600 flex items-center gap-2">
+                              <TrendingDown className="h-6 w-6" />
+                              {impactData.changes.revenueChange.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-gray-600 flex items-center gap-2">
+                              <Minus className="h-6 w-6" />
+                              0%
+                            </span>
+                          )}
+                        </p>
                       </div>
-                    </Card>
-
-                    <Card className="p-4 bg-green-50 border-green-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Revenue</p>
-                          <p className="text-2xl font-bold text-gray-900 mt-1">
-                            {impactData.changes.revenueChange > 0 ? (
-                              <span className="text-green-600">
-                                <TrendingUp className="inline h-5 w-5 mr-1" />
-                                {impactData.changes.revenueChange.toFixed(1)}%
-                              </span>
-                            ) : impactData.changes.revenueChange < 0 ? (
-                              <span className="text-red-600">
-                                <TrendingDown className="inline h-5 w-5 mr-1" />
-                                {Math.abs(impactData.changes.revenueChange).toFixed(1)}%
-                              </span>
-                            ) : (
-                              <span className="text-gray-600">
-                                <Minus className="inline h-5 w-5 mr-1" />
-                                0%
-                              </span>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="mt-4 pt-4 border-t border-green-200">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">
-                            Before: {formatCurrency(impactData.before.totalRevenue)}
+                      <div className="pt-4 border-t-2 border-green-200 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-medium text-gray-600 uppercase">Before</span>
+                          <span className="text-sm font-bold text-gray-900">
+                            {formatCurrency(impactData.before.totalRevenue)}
                           </span>
-                          <span className="text-gray-600">
-                            After: {formatCurrency(impactData.after.totalRevenue)}
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-medium text-gray-600 uppercase">After</span>
+                          <span className="text-sm font-bold text-green-700">
+                            {formatCurrency(impactData.after.totalRevenue)}
                           </span>
                         </div>
                       </div>
                     </Card>
 
-                    <Card className="p-4 bg-purple-50 border-purple-200">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Sales Count</p>
-                          <p className="text-2xl font-bold text-gray-900 mt-1">
-                            {impactData.changes.salesCountChange > 0 ? (
-                              <span className="text-red-600">
-                                <TrendingUp className="inline h-5 w-5 mr-1" />
-                                {impactData.changes.salesCountChange.toFixed(1)}%
-                              </span>
-                            ) : impactData.changes.salesCountChange < 0 ? (
-                              <span className="text-green-600">
-                                <TrendingDown className="inline h-5 w-5 mr-1" />
-                                {Math.abs(impactData.changes.salesCountChange).toFixed(1)}%
-                              </span>
-                            ) : (
-                              <span className="text-gray-600">
-                                <Minus className="inline h-5 w-5 mr-1" />
-                                0%
-                              </span>
-                            )}
-                          </p>
+                    <Card className="p-6 bg-gradient-to-br from-purple-50 to-indigo-50 border-2 border-purple-200 shadow-md hover:shadow-lg transition-shadow">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="p-3 bg-purple-500 rounded-xl">
+                          <Activity className="h-6 w-6 text-white" />
                         </div>
                       </div>
-                      <div className="mt-4 pt-4 border-t border-purple-200">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">Before: {impactData.before.totalSales}</span>
-                          <span className="text-gray-600">After: {impactData.after.totalSales}</span>
+                      <div>
+                        <p className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">Sales Count Change</p>
+                        <p className="text-3xl font-bold text-gray-900 mb-4">
+                          {impactData.changes.salesCountChange > 0 ? (
+                            <span className="text-red-600 flex items-center gap-2">
+                              <TrendingUp className="h-6 w-6" />
+                              +{impactData.changes.salesCountChange.toFixed(1)}%
+                            </span>
+                          ) : impactData.changes.salesCountChange < 0 ? (
+                            <span className="text-green-600 flex items-center gap-2">
+                              <TrendingDown className="h-6 w-6" />
+                              {impactData.changes.salesCountChange.toFixed(1)}%
+                            </span>
+                          ) : (
+                            <span className="text-gray-600 flex items-center gap-2">
+                              <Minus className="h-6 w-6" />
+                              0%
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="pt-4 border-t-2 border-purple-200 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-medium text-gray-600 uppercase">Before</span>
+                          <span className="text-sm font-bold text-gray-900">
+                            {impactData.before.totalSales}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-medium text-gray-600 uppercase">After</span>
+                          <span className="text-sm font-bold text-purple-700">
+                            {impactData.after.totalSales}
+                          </span>
                         </div>
                       </div>
                     </Card>
                   </div>
 
                   {/* Detailed Comparison */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Card className="p-4">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                        30 Days Before Price Change
-                      </h3>
-                      <div className="space-y-3">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Total Sales:</span>
-                          <span className="font-medium">{impactData.before.totalSales}</span>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <Card className="p-6 border-2 border-blue-200 bg-gradient-to-br from-blue-50 to-cyan-50 shadow-md">
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="p-2 bg-blue-500 rounded-lg">
+                          <Clock className="h-5 w-5 text-white" />
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Quantity Sold:</span>
-                          <span className="font-medium">{impactData.before.totalQuantity}</span>
+                        <h3 className="text-lg font-bold text-gray-900">
+                          30 Days Before Price Change
+                        </h3>
+                      </div>
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-blue-100">
+                          <span className="text-sm font-medium text-gray-700">Total Sales:</span>
+                          <span className="font-bold text-blue-700 text-lg">{impactData.before.totalSales}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Total Revenue:</span>
-                          <span className="font-medium">{formatCurrency(impactData.before.totalRevenue)}</span>
+                        <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-blue-100">
+                          <span className="text-sm font-medium text-gray-700">Total Revenue:</span>
+                          <span className="font-bold text-blue-700 text-lg">{formatCurrency(impactData.before.totalRevenue)}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Average Price:</span>
-                          <span className="font-medium">
+                        <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-blue-100">
+                          <span className="text-sm font-medium text-gray-700">Average Price:</span>
+                          <span className="font-bold text-blue-700 text-lg">
                             {formatCurrency(impactData.before.averagePrice)}
                           </span>
                         </div>
                       </div>
                     </Card>
 
-                    <Card className="p-4">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                        30 Days After Price Change
-                      </h3>
-                      <div className="space-y-3">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Total Sales:</span>
-                          <span className="font-medium">{impactData.after.totalSales}</span>
+                    <Card className="p-6 border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-pink-50 shadow-md">
+                      <div className="flex items-center gap-3 mb-6">
+                        <div className="p-2 bg-purple-500 rounded-lg">
+                          <TrendingUpIcon className="h-5 w-5 text-white" />
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Quantity Sold:</span>
-                          <span className="font-medium">{impactData.after.totalQuantity}</span>
+                        <h3 className="text-lg font-bold text-gray-900">
+                          30 Days After Price Change
+                        </h3>
+                      </div>
+                      <div className="space-y-4">
+                        <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-purple-100">
+                          <span className="text-sm font-medium text-gray-700">Total Sales:</span>
+                          <span className="font-bold text-purple-700 text-lg">{impactData.after.totalSales}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Total Revenue:</span>
-                          <span className="font-medium">{formatCurrency(impactData.after.totalRevenue)}</span>
+                        <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-purple-100">
+                          <span className="text-sm font-medium text-gray-700">Total Revenue:</span>
+                          <span className="font-bold text-purple-700 text-lg">{formatCurrency(impactData.after.totalRevenue)}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Average Price:</span>
-                          <span className="font-medium">
+                        <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-purple-100">
+                          <span className="text-sm font-medium text-gray-700">Average Price:</span>
+                          <span className="font-bold text-purple-700 text-lg">
                             {formatCurrency(impactData.after.averagePrice)}
                           </span>
                         </div>
@@ -589,12 +640,18 @@ const PriceHistoryAnalytics = () => {
 
                   {/* Comparison Charts */}
                   {impactData && (
-                    <div className="space-y-6 mt-6">
-                      <h3 className="text-lg font-semibold text-gray-900">Sales Trends Comparison</h3>
+                    <div className="space-y-6 mt-8">
+                      <div className="flex items-center gap-3 mb-4">
+                        <BarChart3 className="h-6 w-6 text-[#160B53]" />
+                        <h3 className="text-xl font-bold text-gray-900">Sales Trends Comparison</h3>
+                      </div>
                       
                       {/* Revenue Chart */}
-                      <Card className="p-4">
-                        <h4 className="text-md font-semibold text-gray-700 mb-4">Daily Revenue Trend</h4>
+                      <Card className="p-6 border-2 border-gray-200 shadow-md">
+                        <div className="flex items-center gap-3 mb-6">
+                          <Banknote className="h-5 w-5 text-green-600" />
+                          <h4 className="text-lg font-bold text-gray-900">Daily Revenue Trend</h4>
+                        </div>
                         <ResponsiveContainer width="100%" height={300}>
                           <LineChart data={(() => {
                             // Combine before and after sales by date
@@ -612,7 +669,7 @@ const PriceHistoryAnalytics = () => {
                             <CartesianGrid strokeDasharray="3 3" />
                             <XAxis dataKey="date" />
                             <YAxis />
-                            <Tooltip formatter={(value) => `Γé▒${value.toLocaleString()}`} />
+                            <Tooltip formatter={(value) => `₱${value.toLocaleString()}`} />
                             <Legend />
                             <Line 
                               type="monotone" 
@@ -634,35 +691,12 @@ const PriceHistoryAnalytics = () => {
                         </ResponsiveContainer>
                       </Card>
 
-                      {/* Quantity Chart */}
-                      <Card className="p-4">
-                        <h4 className="text-md font-semibold text-gray-700 mb-4">Daily Quantity Sold</h4>
-                        <ResponsiveContainer width="100%" height={300}>
-                          <BarChart data={(() => {
-                            const beforeDates = Object.keys(impactData.before.salesByDate || {});
-                            const afterDates = Object.keys(impactData.after.salesByDate || {});
-                            const allDates = [...new Set([...beforeDates, ...afterDates])].sort();
-                            
-                            return allDates.map(date => ({
-                              date: format(new Date(date), 'MMM dd'),
-                              before: impactData.before.salesByDate[date]?.quantity || 0,
-                              after: impactData.after.salesByDate[date]?.quantity || 0
-                            }));
-                          })()}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="date" />
-                            <YAxis />
-                            <Tooltip />
-                            <Legend />
-                            <Bar dataKey="before" fill="#3b82f6" name="30 Days Before" />
-                            <Bar dataKey="after" fill="#ef4444" name="30 Days After" />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </Card>
-
                       {/* Sales Count Chart */}
-                      <Card className="p-4">
-                        <h4 className="text-md font-semibold text-gray-700 mb-4">Daily Sales Count</h4>
+                      <Card className="p-6 border-2 border-gray-200 shadow-md">
+                        <div className="flex items-center gap-3 mb-6">
+                          <Activity className="h-5 w-5 text-purple-600" />
+                          <h4 className="text-lg font-bold text-gray-900">Daily Sales Count</h4>
+                        </div>
                         <ResponsiveContainer width="100%" height={300}>
                           <LineChart data={(() => {
                             const beforeDates = Object.keys(impactData.before.salesByDate || {});
@@ -716,7 +750,7 @@ const PriceHistoryAnalytics = () => {
                 setSelectedPriceType(null);
                 setTransactions([]);
               }}
-              title={`Transactions - ${selectedPriceType === 'old' ? 'Old' : 'New'} Price Period (Γé▒${(selectedPriceType === 'old' ? selectedPriceChange.oldPrice : selectedPriceChange.newPrice).toLocaleString()})`}
+              title={`Transactions - ${selectedPriceType === 'old' ? 'Old' : 'New'} Price Period (₱${(selectedPriceType === 'old' ? selectedPriceChange.oldPrice : selectedPriceChange.newPrice).toLocaleString()})`}
               size="xl"
             >
               {loadingTransactions ? (
@@ -738,12 +772,11 @@ const PriceHistoryAnalytics = () => {
                       <div>
                         <p className="text-sm font-medium text-gray-700">Price Period:</p>
                         <p className="text-lg font-semibold text-gray-900">
-                          Γé▒{(selectedPriceType === 'old' ? selectedPriceChange.oldPrice : selectedPriceChange.newPrice).toLocaleString()} per service
+                          ₱{(selectedPriceType === 'old' ? selectedPriceChange.oldPrice : selectedPriceChange.newPrice).toLocaleString()} per service
                         </p>
                         <p className="text-xs text-gray-500 mt-1">
                           Total Transactions: {transactions.length} | 
-                          Total Revenue: Γé▒{transactions.reduce((sum, t) => sum + t.itemPrice * t.quantity, 0).toLocaleString()} |
-                          Total Quantity: {transactions.reduce((sum, t) => sum + t.quantity, 0)}
+                          Total Revenue: ₱{transactions.reduce((sum, t) => sum + t.itemPrice, 0).toLocaleString()}
                         </p>
                       </div>
                     </div>
@@ -757,7 +790,6 @@ const PriceHistoryAnalytics = () => {
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Client</th>
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Service</th>
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Price</th>
-                          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Qty</th>
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Payment</th>
                           <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Stylist</th>
@@ -781,13 +813,10 @@ const PriceHistoryAnalytics = () => {
                               {transaction.itemName}
                             </td>
                             <td className="px-4 py-2 whitespace-nowrap text-gray-900">
-                              Γé▒{transaction.itemPrice.toLocaleString()}
-                            </td>
-                            <td className="px-4 py-2 whitespace-nowrap text-gray-900">
-                              {transaction.quantity}
+                              ₱{transaction.itemPrice.toLocaleString()}
                             </td>
                             <td className="px-4 py-2 whitespace-nowrap text-gray-900 font-medium">
-                              Γé▒{(transaction.itemPrice * transaction.quantity).toLocaleString()}
+                              ₱{transaction.itemPrice.toLocaleString()}
                             </td>
                             <td className="px-4 py-2 whitespace-nowrap text-gray-900">
                               <span className="capitalize">{transaction.paymentMethod}</span>

@@ -12,7 +12,7 @@ import { logActivity as activityServiceLogActivity } from '../../services/activi
 import { stockListenerService } from '../../services/stockListenerService';
 import { weeklyStockRecorder } from '../../services/weeklyStockRecorder';
 import { db, auth } from '../../config/firebase';
-import { collection, addDoc, serverTimestamp, getDocs, query, where, orderBy, limit, startAfter, getCountFromServer, updateDoc, doc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs, query, where, orderBy, limit, startAfter, getCountFromServer, updateDoc, doc, getDoc, Timestamp } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { 
   Package, 
@@ -102,6 +102,13 @@ const Stocks = () => {
   const [showDeductionHistory, setShowDeductionHistory] = useState(false);
   const [deductionSearchTerm, setDeductionSearchTerm] = useState('');
   const [deductionDateFilter, setDeductionDateFilter] = useState('7days'); // 'all', '7days', '30days', '90days'
+  
+  // Stock adjustments history states
+  const [stockAdjustments, setStockAdjustments] = useState([]);
+  const [loadingAdjustments, setLoadingAdjustments] = useState(false);
+  const [showAdjustmentsHistory, setShowAdjustmentsHistory] = useState(false);
+  const [adjustmentDateFilter, setAdjustmentDateFilter] = useState('all'); // 'all', '7days', '30days', '90days', '1year'
+  const [adjustmentSearchTerm, setAdjustmentSearchTerm] = useState('');
   
   // Edit stock form state
   const [editStockForm, setEditStockForm] = useState({
@@ -331,11 +338,12 @@ const Stocks = () => {
           console.error('Error getting count:', countErr);
         }
         
-        // Load first page only (paginated)
+        // Load first page only (paginated) - include both regular stocks and batch_stocks
+        // Fetch data first, then sort in JavaScript to avoid needing a Firestore index
         const q = query(
           stocksRef, 
           where('branchId', '==', userData.branchId),
-          limit(itemsPerPage)
+          limit(itemsPerPage * 2) // Fetch more to account for sorting, then limit after sorting
         );
         
         const snapshot = await getDocs(q);
@@ -347,22 +355,34 @@ const Stocks = () => {
             // Convert Firestore timestamps to dates
             startPeriod: data.startPeriod?.toDate ? data.startPeriod.toDate() : (data.startPeriod ? new Date(data.startPeriod) : null),
             endPeriod: data.endPeriod?.toDate ? data.endPeriod.toDate() : (data.endPeriod ? new Date(data.endPeriod) : null),
+            expirationDate: data.expirationDate?.toDate ? data.expirationDate.toDate() : (data.expirationDate ? new Date(data.expirationDate) : null),
+            receivedDate: data.receivedDate?.toDate ? data.receivedDate.toDate() : (data.receivedDate ? new Date(data.receivedDate) : null),
             createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
             updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : (data.updatedAt ? new Date(data.updatedAt) : new Date())
           };
         });
         
-        // Sort in JavaScript by startPeriod descending (newest first)
+        // Sort in JavaScript by createdAt descending (newest first), then by startPeriod
         stocksData = stocksData.sort((a, b) => {
-          const dateA = a.startPeriod ? new Date(a.startPeriod) : new Date(0);
-          const dateB = b.startPeriod ? new Date(b.startPeriod) : new Date(0);
+          // First sort by createdAt (newest first)
+          const createdA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const createdB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          if (createdB !== createdA) {
+            return createdB - createdA; // Descending order
+          }
+          // If createdAt is same, sort by startPeriod
+          const dateA = a.startPeriod ? new Date(a.startPeriod).getTime() : 0;
+          const dateB = b.startPeriod ? new Date(b.startPeriod).getTime() : 0;
           return dateB - dateA; // Descending order
         });
+        
+        // Limit to itemsPerPage after sorting
+        stocksData = stocksData.slice(0, itemsPerPage);
         
         // Update pagination state
         const lastDoc = snapshot.docs[snapshot.docs.length - 1];
         setLastVisible(lastDoc);
-        setHasMore(snapshot.docs.length === itemsPerPage);
+        setHasMore(snapshot.docs.length >= itemsPerPage);
         setCurrentPage(1);
         
         setStocks(stocksData);
@@ -398,6 +418,8 @@ const Stocks = () => {
           ...data,
           startPeriod: data.startPeriod?.toDate ? data.startPeriod.toDate() : (data.startPeriod ? new Date(data.startPeriod) : null),
           endPeriod: data.endPeriod?.toDate ? data.endPeriod.toDate() : (data.endPeriod ? new Date(data.endPeriod) : null),
+          expirationDate: data.expirationDate?.toDate ? data.expirationDate.toDate() : (data.expirationDate ? new Date(data.expirationDate) : null),
+          receivedDate: data.receivedDate?.toDate ? data.receivedDate.toDate() : (data.receivedDate ? new Date(data.receivedDate) : null),
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
           updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : (data.updatedAt ? new Date(data.updatedAt) : new Date())
         };
@@ -543,27 +565,67 @@ const Stocks = () => {
       });
   };
 
-  // Group stocks by product to show current month
+  // Calculate stock status based on stock levels
+  const calculateStockStatus = (stock) => {
+    const currentStock = stock.realTimeStock || stock.weekFourStock || stock.beginningStock || stock.currentStock || 0;
+    const minStock = stock.minStock || stock.product?.minStock || 0;
+    
+    if (currentStock > minStock) {
+      return 'In Stock';
+    } else if (currentStock > 0) {
+      return 'Low Stock';
+    } else {
+      return 'Out of Stock';
+    }
+  };
+
+  // Get all stocks (including all batches for each product)
+  // For batch stocks, show all active batches. For regular stocks, show current month only.
   const getCurrentStocksByProduct = () => {
     const currentDate = new Date();
     const currentMonthStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
     
-    const productMap = new Map();
+    const stockList = [];
+    const processedRegularStocks = new Set(); // Track regular stocks to avoid duplicates
     
     stocks.forEach(stock => {
-      if (!stock.startPeriod) return;
-      const stockStart = new Date(stock.startPeriod);
+      const isBatchStock = stock.stockType === 'batch' || stock.batchId || stock.batchNumber;
       
-      // Check if this stock record is for the current month
-      const isCurrentMonth = 
-        stockStart.getMonth() === currentMonthStart.getMonth() &&
-        stockStart.getFullYear() === currentMonthStart.getFullYear();
-      
-      if (isCurrentMonth || !productMap.has(stock.productId)) {
-        const existing = productMap.get(stock.productId);
-        if (!existing || isCurrentMonth) {
-          productMap.set(stock.productId, {
+      if (isBatchStock) {
+        // For batch stocks, show ALL batches (even if depleted, so you can see history)
+        // Only filter out if realTimeStock is 0 AND it's an old batch (older than current month)
+        const stockStart = stock.startPeriod ? new Date(stock.startPeriod) : null;
+        const isCurrentMonth = stockStart && 
+          stockStart.getMonth() === currentMonthStart.getMonth() &&
+          stockStart.getFullYear() === currentMonthStart.getFullYear();
+        
+        const realTimeStock = stock.realTimeStock || 0;
+        // Show batch if: has stock, or is current month, or was created recently
+        if (realTimeStock > 0 || isCurrentMonth || (stockStart && stockStart >= currentMonthStart)) {
+          // Always calculate status based on current stock levels to ensure it matches filter options
+          const calculatedStatus = calculateStockStatus(stock);
+          stockList.push({
             ...stock,
+            status: calculatedStatus, // Ensure status matches filter options: 'In Stock', 'Low Stock', 'Out of Stock'
+            product: products.find(p => p.id === stock.productId),
+            stockHistory: getStockHistoryForProduct(stock.productId)
+          });
+        }
+      } else {
+        // For regular stocks (non-batch), show current month only (one per product)
+        if (!stock.startPeriod) return;
+        const stockStart = new Date(stock.startPeriod);
+        const isCurrentMonth = 
+          stockStart.getMonth() === currentMonthStart.getMonth() &&
+          stockStart.getFullYear() === currentMonthStart.getFullYear();
+        
+        if (isCurrentMonth && !processedRegularStocks.has(stock.productId)) {
+          processedRegularStocks.add(stock.productId);
+          // Always calculate status based on current stock levels to ensure it matches filter options
+          const calculatedStatus = calculateStockStatus(stock);
+          stockList.push({
+            ...stock,
+            status: calculatedStatus, // Ensure status matches filter options: 'In Stock', 'Low Stock', 'Out of Stock'
             product: products.find(p => p.id === stock.productId),
             stockHistory: getStockHistoryForProduct(stock.productId)
           });
@@ -571,7 +633,7 @@ const Stocks = () => {
       }
     });
     
-    return Array.from(productMap.values());
+    return stockList;
   };
 
   // Get current month stocks for display (only from loaded stocks)
@@ -943,6 +1005,228 @@ const Stocks = () => {
     }
   }, [showDeductionHistory, deductionDateFilter, userData?.branchId]);
 
+  // Load stock adjustments history (includes: Force Adjustments, Transactions, Stock Transfers)
+  const loadStockAdjustments = async () => {
+    if (!userData?.branchId) return;
+    
+    try {
+      setLoadingAdjustments(true);
+      const allAdjustments = [];
+      const now = new Date();
+      let startDate = new Date();
+      
+      // Calculate start date for filter
+      if (adjustmentDateFilter !== 'all') {
+        switch (adjustmentDateFilter) {
+          case '7days':
+            startDate.setDate(now.getDate() - 7);
+            break;
+          case '30days':
+            startDate.setDate(now.getDate() - 30);
+            break;
+          case '90days':
+            startDate.setDate(now.getDate() - 90);
+            break;
+          case '1year':
+            startDate.setFullYear(now.getFullYear() - 1);
+            break;
+        }
+      }
+      const startTimestamp = adjustmentDateFilter !== 'all' ? Timestamp.fromDate(startDate) : null;
+
+      // 1. Load Force Adjustments (from stockAdjustments collection)
+      try {
+        const adjustmentsRef = collection(db, 'stockAdjustments');
+        let adjustmentsQuery = query(
+          adjustmentsRef,
+          where('branchId', '==', userData.branchId),
+          orderBy('createdAt', 'desc')
+        );
+        if (startTimestamp) {
+          adjustmentsQuery = query(adjustmentsQuery, where('createdAt', '>=', startTimestamp));
+        }
+        const adjustmentsSnapshot = await getDocs(adjustmentsQuery);
+        adjustmentsSnapshot.forEach((doc) => {
+          const data = doc.data();
+          allAdjustments.push({
+            id: doc.id,
+            type: 'force_adjustment',
+            adjustmentType: 'Force Adjustment',
+            productId: data.productId,
+            previousStock: data.previousStock,
+            newStock: data.newStock,
+            adjustmentQuantity: data.adjustmentQuantity,
+            reason: data.reason,
+            notes: data.notes,
+            adjustedBy: data.adjustedBy,
+            managerCode: data.managerCode,
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : 
+                       data.createdAt instanceof Date ? data.createdAt :
+                       data.createdAt ? new Date(data.createdAt) : new Date(),
+          });
+        });
+      } catch (error) {
+        console.error('Error loading force adjustments:', error);
+      }
+
+      // 2. Load Transactions (from inventory_movements collection - stock_out type)
+      try {
+        const movementsRef = collection(db, 'inventory_movements');
+        let movementsQuery = query(
+          movementsRef,
+          where('branchId', '==', userData.branchId),
+          where('type', '==', 'stock_out'),
+          orderBy('createdAt', 'desc')
+        );
+        if (startTimestamp) {
+          movementsQuery = query(movementsQuery, where('createdAt', '>=', startTimestamp));
+        }
+        const movementsSnapshot = await getDocs(movementsQuery);
+        movementsSnapshot.forEach((doc) => {
+          const data = doc.data();
+          allAdjustments.push({
+            id: doc.id,
+            type: 'transaction',
+            adjustmentType: 'Transaction Sale',
+            productId: data.productId,
+            previousStock: null, // Transactions don't track previous stock
+            newStock: null,
+            adjustmentQuantity: -data.quantity, // Negative for deductions
+            reason: data.reason || 'Transaction Sale',
+            notes: data.notes || `Transaction: ${data.transactionId || 'N/A'}`,
+            adjustedBy: data.createdBy,
+            transactionId: data.transactionId,
+            batchesUsed: data.batchDeductions,
+            createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : 
+                       data.createdAt instanceof Date ? data.createdAt :
+                       data.createdAt ? new Date(data.createdAt) : new Date(),
+          });
+        });
+      } catch (error) {
+        console.error('Error loading transactions:', error);
+      }
+
+      // 3. Load Stock Transfers (from stock_transfer collection)
+      try {
+        const transfersRef = collection(db, 'stock_transfer');
+        // Get transfers where this branch is sender (outgoing) or receiver (incoming)
+        const outgoingQuery = query(
+          transfersRef,
+          where('fromBranchId', '==', userData.branchId),
+          orderBy('transferDate', 'desc')
+        );
+        const incomingQuery = query(
+          transfersRef,
+          where('toBranchId', '==', userData.branchId),
+          orderBy('transferDate', 'desc')
+        );
+        
+        const [outgoingSnapshot, incomingSnapshot] = await Promise.all([
+          getDocs(outgoingQuery),
+          getDocs(incomingQuery)
+        ]);
+
+        // Process outgoing transfers (deductions from this branch)
+        outgoingSnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (startTimestamp && data.transferDate?.toDate && data.transferDate.toDate() < startTimestamp.toDate()) {
+            return; // Skip if before start date
+          }
+          data.items?.forEach((item) => {
+            allAdjustments.push({
+              id: `${doc.id}-${item.productId}`,
+              type: 'transfer_out',
+              adjustmentType: `Transfer Out → ${data.toBranchName || 'Other Branch'}`,
+              productId: item.productId,
+              previousStock: null,
+              newStock: null,
+              adjustmentQuantity: -item.quantity, // Negative for outgoing
+              reason: 'Stock Transfer',
+              notes: `Transfer ID: ${data.transferId || doc.id} | Batches: ${item.batches?.map(b => b.batchNumber).join(', ') || 'N/A'}`,
+              adjustedBy: data.createdBy,
+              transferId: data.transferId || doc.id,
+              batchesUsed: item.batches,
+              createdAt: data.transferDate?.toDate ? data.transferDate.toDate() : 
+                         data.createdAt?.toDate ? data.createdAt.toDate() :
+                         data.createdAt instanceof Date ? data.createdAt :
+                         data.createdAt ? new Date(data.createdAt) : new Date(),
+            });
+          });
+        });
+
+        // Process incoming transfers (additions to this branch)
+        incomingSnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (startTimestamp && data.transferDate?.toDate && data.transferDate.toDate() < startTimestamp.toDate()) {
+            return; // Skip if before start date
+          }
+          if (data.status === 'completed' || data.status === 'received') {
+            data.items?.forEach((item) => {
+              allAdjustments.push({
+                id: `${doc.id}-${item.productId}-in`,
+                type: 'transfer_in',
+                adjustmentType: `Transfer In ← ${data.fromBranchName || 'Other Branch'}`,
+                productId: item.productId,
+                previousStock: null,
+                newStock: null,
+                adjustmentQuantity: item.quantity, // Positive for incoming
+                reason: 'Stock Transfer Received',
+                notes: `Transfer ID: ${data.transferId || doc.id} | Received: ${data.receivedAt ? format(data.receivedAt.toDate ? data.receivedAt.toDate() : new Date(data.receivedAt), 'MMM dd, yyyy') : 'N/A'}`,
+                adjustedBy: data.receivedBy || data.createdBy,
+                transferId: data.transferId || doc.id,
+                batchesReceived: item.batches,
+                createdAt: data.receivedAt?.toDate ? data.receivedAt.toDate() : 
+                           data.transferDate?.toDate ? data.transferDate.toDate() :
+                           data.createdAt?.toDate ? data.createdAt.toDate() :
+                           data.createdAt instanceof Date ? data.createdAt :
+                           data.createdAt ? new Date(data.createdAt) : new Date(),
+              });
+            });
+          }
+        });
+      } catch (error) {
+        console.error('Error loading stock transfers:', error);
+      }
+
+      // Sort all adjustments by date (newest first)
+      allAdjustments.sort((a, b) => b.createdAt - a.createdAt);
+
+      // Get product names for each adjustment
+      const adjustmentsWithProducts = allAdjustments.map((adj) => {
+        const product = products.find(p => p.id === adj.productId);
+        return {
+          ...adj,
+          productName: product?.name || 'Unknown Product',
+          productSku: product?.sku || product?.upc || 'N/A'
+        };
+      });
+
+      // Filter by search term if provided
+      const filtered = adjustmentSearchTerm
+        ? adjustmentsWithProducts.filter(adj =>
+            adj.productName.toLowerCase().includes(adjustmentSearchTerm.toLowerCase()) ||
+            adj.adjustmentType?.toLowerCase().includes(adjustmentSearchTerm.toLowerCase()) ||
+            adj.reason?.toLowerCase().includes(adjustmentSearchTerm.toLowerCase()) ||
+            adj.notes?.toLowerCase().includes(adjustmentSearchTerm.toLowerCase())
+          )
+        : adjustmentsWithProducts;
+
+      setStockAdjustments(filtered);
+    } catch (error) {
+      console.error('Error loading stock adjustments:', error);
+      setStockAdjustments([]);
+    } finally {
+      setLoadingAdjustments(false);
+    }
+  };
+
+  // Load adjustments when showing history or filters change
+  useEffect(() => {
+    if (showAdjustmentsHistory) {
+      loadStockAdjustments();
+    }
+  }, [showAdjustmentsHistory, adjustmentDateFilter, userData?.branchId, products, adjustmentSearchTerm]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1058,6 +1342,19 @@ const Stocks = () => {
               <Activity className="h-4 w-4" />
               {showDeductionHistory ? 'Hide' : 'Show'} Deduction History
             </Button>
+            <Button 
+              variant="outline"
+              className={`flex items-center gap-2 ${showAdjustmentsHistory ? 'bg-orange-50 border-orange-300' : ''}`}
+              onClick={() => {
+                setShowAdjustmentsHistory(!showAdjustmentsHistory);
+                if (!showAdjustmentsHistory) {
+                  loadStockAdjustments();
+                }
+              }}
+            >
+              <AlertTriangle className="h-4 w-4" />
+              {showAdjustmentsHistory ? 'Hide' : 'Show'} Adjustments History
+            </Button>
           </div>
         </div>
 
@@ -1116,6 +1413,199 @@ const Stocks = () => {
             </div>
           </Card>
         </div>
+
+        {/* Stock Adjustments History */}
+        {showAdjustmentsHistory && (
+          <Card className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Stock Adjustments History</h2>
+                <p className="text-gray-600 text-sm mt-1">View all stock movements: Force Adjustments, Transactions (Sales), and Stock Transfers</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <select
+                  value={adjustmentDateFilter}
+                  onChange={(e) => setAdjustmentDateFilter(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-sm"
+                >
+                  <option value="all">All Time</option>
+                  <option value="7days">Last 7 Days</option>
+                  <option value="30days">Last 30 Days</option>
+                  <option value="90days">Last 90 Days</option>
+                  <option value="1year">Last Year</option>
+                </select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadStockAdjustments}
+                  disabled={loadingAdjustments}
+                  className="flex items-center gap-2"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loadingAdjustments ? 'animate-spin' : ''}`} />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+
+            {/* Search */}
+            <div className="mb-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Input
+                  type="text"
+                  placeholder="Search by product name, reason, or notes..."
+                  value={adjustmentSearchTerm}
+                  onChange={(e) => setAdjustmentSearchTerm(e.target.value)}
+                  className="pl-10 w-full"
+                />
+              </div>
+            </div>
+
+            {/* Adjustments Table */}
+            {loadingAdjustments ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="h-8 w-8 animate-spin text-orange-600" />
+                <span className="ml-2 text-gray-600">Loading adjustments history...</span>
+              </div>
+            ) : stockAdjustments.length === 0 ? (
+              <div className="text-center py-12 bg-gray-50 rounded-lg">
+                <AlertTriangle className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+                <p className="text-gray-600">No stock adjustments found for the selected period</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Date & Time
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Type
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Product
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Previous Stock
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        New Stock
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Adjustment
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Reason / Details
+                      </th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
+                        Adjusted By
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {stockAdjustments.map((adjustment) => {
+                      const typeColors = {
+                        'force_adjustment': 'bg-orange-100 text-orange-800 border-orange-200',
+                        'transaction': 'bg-blue-100 text-blue-800 border-blue-200',
+                        'transfer_out': 'bg-purple-100 text-purple-800 border-purple-200',
+                        'transfer_in': 'bg-green-100 text-green-800 border-green-200'
+                      };
+                      const typeIcons = {
+                        'force_adjustment': <AlertTriangle className="h-3 w-3" />,
+                        'transaction': <ShoppingCart className="h-3 w-3" />,
+                        'transfer_out': <ArrowRight className="h-3 w-3" />,
+                        'transfer_in': <ArrowRightLeft className="h-3 w-3" />
+                      };
+                      
+                      return (
+                        <tr key={adjustment.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">
+                              {format(adjustment.createdAt, 'MMM dd, yyyy')}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {format(adjustment.createdAt, 'hh:mm a')}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${typeColors[adjustment.type] || 'bg-gray-100 text-gray-800 border-gray-200'}`}>
+                              {typeIcons[adjustment.type]}
+                              {adjustment.adjustmentType || 'Adjustment'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="text-sm font-medium text-gray-900">
+                              {adjustment.productName}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              SKU: {adjustment.productSku}
+                            </div>
+                            {adjustment.batchesUsed && adjustment.batchesUsed.length > 0 && (
+                              <div className="text-xs text-blue-600 mt-1">
+                                Batches: {adjustment.batchesUsed.map(b => b.batchNumber || b.batchId).slice(0, 2).join(', ')}
+                                {adjustment.batchesUsed.length > 2 && ` +${adjustment.batchesUsed.length - 2} more`}
+                              </div>
+                            )}
+                            {adjustment.batchesReceived && adjustment.batchesReceived.length > 0 && (
+                              <div className="text-xs text-green-600 mt-1">
+                                Received Batches: {adjustment.batchesReceived.map(b => b.batchNumber || b.batchId).slice(0, 2).join(', ')}
+                                {adjustment.batchesReceived.length > 2 && ` +${adjustment.batchesReceived.length - 2} more`}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="text-sm text-gray-900 font-medium">
+                              {adjustment.previousStock !== null && adjustment.previousStock !== undefined ? adjustment.previousStock : '-'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className="text-sm text-gray-900 font-medium">
+                              {adjustment.newStock !== null && adjustment.newStock !== undefined ? adjustment.newStock : '-'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                              (adjustment.adjustmentQuantity || 0) >= 0 
+                                ? 'bg-green-100 text-green-800' 
+                                : 'bg-red-100 text-red-800'
+                            }`}>
+                              {(adjustment.adjustmentQuantity || 0) >= 0 ? '+' : ''}{adjustment.adjustmentQuantity || 0}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="text-sm text-gray-900 max-w-xs" title={adjustment.reason || adjustment.notes}>
+                              <div className="font-medium">{adjustment.reason || 'N/A'}</div>
+                              {adjustment.notes && (
+                                <div className="text-xs text-gray-600 mt-1 truncate">{adjustment.notes}</div>
+                              )}
+                              {adjustment.transferId && (
+                                <div className="text-xs text-gray-500 mt-1">ID: {adjustment.transferId.slice(-8)}</div>
+                              )}
+                              {adjustment.transactionId && (
+                                <div className="text-xs text-gray-500 mt-1">Txn: {adjustment.transactionId.slice(-8)}</div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="text-sm text-gray-600">
+                              {adjustment.adjustedBy || 'Unknown'}
+                            </div>
+                            {adjustment.managerCode && (
+                              <div className="text-xs text-gray-500">
+                                Code: {adjustment.managerCode}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* Stock Deduction History */}
         {showDeductionHistory && (
@@ -1350,7 +1840,7 @@ const Stocks = () => {
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Product
+                      Product / Batch
                     </th>
                     <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">
                       Beginning
@@ -1359,19 +1849,10 @@ const Stocks = () => {
                       Current
                     </th>
                     <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">
-                      Min/Max
-                    </th>
-                    <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
                     <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">
                       Weekly
-                    </th>
-                    <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">
-                      Location
-                    </th>
-                    <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">
-                      Period
                     </th>
                     <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
@@ -1389,13 +1870,37 @@ const Stocks = () => {
                   const category = stock.category || product?.category || '';
                   const monthLabel = stock.startPeriod ? format(new Date(stock.startPeriod), 'MMMM yyyy') : 'Unknown';
                   
+                  // Check if this is a batch_stock
+                  const isBatchStock = stock.stockType === 'batch' || stock.batchId || stock.batchNumber;
+                  const batchNumber = stock.batchNumber || 'N/A';
+                  const batchId = stock.batchId || null;
+                  
                   return (
-                  <tr key={stock.id || `${stock.productId}-${stock.startPeriod}`} className="hover:bg-gray-50">
+                  <tr key={stock.id || `${stock.productId}-${stock.startPeriod}-${batchId}`} className={`hover:bg-gray-50 ${isBatchStock ? 'bg-blue-50/30' : ''}`}>
                     <td className="px-3 md:px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="text-sm font-medium text-gray-900">{productName}</div>
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-medium text-gray-900">{productName}</div>
+                          {isBatchStock && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                              Batch: {batchNumber}
+                            </span>
+                          )}
+                        </div>
                         <div className="text-xs md:text-sm text-gray-500">{brand} • {upc}</div>
-                        <div className="text-xs text-gray-400 hidden md:block">{category}</div>
+                        <div className="text-xs text-gray-400 hidden md:block">
+                          {category}
+                          {isBatchStock && stock.expirationDate && (
+                            <span className="ml-2 text-orange-600">
+                              • Expires: {format(new Date(stock.expirationDate), 'MMM dd, yyyy')}
+                            </span>
+                          )}
+                        </div>
+                        {isBatchStock && stock.receivedDate && (
+                          <div className="text-xs text-gray-400 hidden md:block">
+                            Received: {format(new Date(stock.receivedDate), 'MMM dd, yyyy')}
+                          </div>
+                        )}
                       </div>
                     </td>
                     <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden md:table-cell">
@@ -1405,10 +1910,6 @@ const Stocks = () => {
                     <td className="px-3 md:px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{currentStock}</div>
                       <div className="text-xs text-gray-500">{monthLabel}</div>
-                    </td>
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden lg:table-cell">
-                      <div className="text-sm text-gray-900">{stock.minStock || 'N/A'} / {stock.maxStock || 'N/A'}</div>
-                      <div className="text-xs text-gray-500">min / max</div>
                     </td>
                     <td className="px-3 md:px-6 py-4 whitespace-nowrap">
                       <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(stock.status || 'In Stock')}`}>
@@ -1421,18 +1922,6 @@ const Stocks = () => {
                         {stock.weekOneStock || 0} / {stock.weekTwoStock || 0} / {stock.weekThreeStock || 0} / {stock.weekFourStock || 0}
                       </div>
                       <div className="text-xs text-gray-500">W1 / W2 / W3 / W4</div>
-                    </td>
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden lg:table-cell">
-                      <div className="text-sm text-gray-900">{stock.location || 'N/A'}</div>
-                      <div className="text-xs text-gray-500">{stock.branchName || 'N/A'}</div>
-                    </td>
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden xl:table-cell">
-                      <div className="text-sm text-gray-900">
-                        {stock.startPeriod ? format(new Date(stock.startPeriod), 'MMM dd, yyyy') : 'N/A'}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {stock.endPeriod ? format(new Date(stock.endPeriod), 'MMM dd, yyyy') : 'N/A'}
-                      </div>
                     </td>
                     <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium">
                       <div className="flex gap-2">
@@ -1615,9 +2104,23 @@ const Stocks = () => {
                 </div>
                 <div className="flex-1">
                   <div className="flex items-start justify-between mb-2">
-                    <h2 className="text-xl font-bold text-gray-900">
-                      {selectedStock.productName || selectedStock.product?.name || 'Unknown Product'}
-                    </h2>
+                    <div className="flex-1">
+                      <h2 className="text-xl font-bold text-gray-900">
+                        {selectedStock.productName || selectedStock.product?.name || 'Unknown Product'}
+                      </h2>
+                      {(selectedStock.stockType === 'batch' || selectedStock.batchId || selectedStock.batchNumber) && (
+                        <div className="mt-2">
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                            Batch: {selectedStock.batchNumber || 'N/A'}
+                          </span>
+                          {selectedStock.purchaseOrderId && (
+                            <span className="ml-2 text-xs text-gray-500">
+                              PO: {selectedStock.purchaseOrderId}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(selectedStock.status || 'In Stock')}`}>
                       {getStatusIcon(selectedStock.status || 'In Stock')}
                       {selectedStock.status || 'In Stock'}
@@ -1629,6 +2132,16 @@ const Stocks = () => {
                   <p className="text-sm text-gray-500">
                     UPC: {selectedStock.upc || selectedStock.product?.upc || 'N/A'}
                   </p>
+                  {(selectedStock.stockType === 'batch' || selectedStock.batchId) && selectedStock.expirationDate && (
+                    <p className="text-sm text-orange-600 mt-1 font-medium">
+                      Expiration: {format(new Date(selectedStock.expirationDate), 'MMM dd, yyyy')}
+                    </p>
+                  )}
+                  {(selectedStock.stockType === 'batch' || selectedStock.batchId) && selectedStock.receivedDate && (
+                    <p className="text-sm text-gray-500 mt-1">
+                      Received: {format(new Date(selectedStock.receivedDate), 'MMM dd, yyyy')}
+                    </p>
+                  )}
                   <p className="text-sm text-blue-600 mt-2 font-medium">
                     {selectedStock.startPeriod ? format(new Date(selectedStock.startPeriod), 'MMMM yyyy') : 'No period set'}
                   </p>

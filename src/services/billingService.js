@@ -118,51 +118,107 @@ export const createBill = async (billData, currentUser) => {
 
     const docRef = await addDoc(billRef, bill);
     
-    // Directly deduct stock for products in transaction
+    // Deduct stock using FIFO (First In First Out) for products in transaction
     if (salesType === 'product' || salesType === 'mixed') {
       try {
         const productItems = items.filter(item => item.type === 'product');
         
         if (productItems.length > 0) {
-          const stockBatch = writeBatch(db);
+          // Import inventoryService for FIFO batch deduction
+          const { inventoryService } = await import('./inventoryService');
           
           for (const item of productItems) {
             if (!item.id || !item.quantity || item.quantity <= 0) continue;
             
-            // Find stock document by productId and branchId
-            const stockQuery = query(
-              collection(db, 'stocks'),
-              where('productId', '==', item.id),
-              where('branchId', '==', billData.branchId),
-              where('status', '==', 'active')
-            );
-            
-            const stockSnapshot = await getDocs(stockQuery);
-            
-            if (!stockSnapshot.empty) {
-              const stockDoc = stockSnapshot.docs[0];
-              const stockData = stockDoc.data();
-              const stockRef = stockDoc.ref;
-              
-              const currentStock = parseInt(stockData.realTimeStock || 0);
-              const quantityToDeduct = parseInt(item.quantity || 0);
-              const newStock = Math.max(0, currentStock - quantityToDeduct);
-              
-              // Update stock directly
-              stockBatch.update(stockRef, {
-                realTimeStock: newStock,
-                updatedAt: serverTimestamp()
+            // Use FIFO to deduct from batches (oldest batches first)
+            // If batches are already provided in the item, use those
+            // Otherwise, let deductStockFIFO determine which batches to use
+            if (item.batches && item.batches.length > 0) {
+              // Batches are already determined, use deductStockFIFO which will use FIFO logic
+              // Pass the batches so it uses the exact batches from the transaction
+              const deductionResult = await inventoryService.deductStockFIFO({
+                branchId: billData.branchId,
+                productId: item.id,
+                quantity: item.quantity,
+                reason: 'Transaction Sale',
+                notes: `Bill ID: ${docRef.id}, Product: ${item.name}`,
+                createdBy: billData.createdBy || 'system',
+                productName: item.name || 'Unknown Product',
+                batches: item.batches // Pass the batches from the transaction
               });
               
-              console.log(`✅ Stock deducted: ${item.name} - ${quantityToDeduct} units (${currentStock} → ${newStock})`);
+              if (!deductionResult.success) {
+                console.warn(`⚠️ FIFO deduction failed for ${item.name}:`, deductionResult.message);
+                // Fallback to old method if FIFO fails
+                const stockQuery = query(
+                  collection(db, 'stocks'),
+                  where('productId', '==', item.id),
+                  where('branchId', '==', billData.branchId),
+                  where('status', '==', 'active')
+                );
+                
+                const stockSnapshot = await getDocs(stockQuery);
+                if (!stockSnapshot.empty) {
+                  const stockDoc = stockSnapshot.docs[0];
+                  const stockData = stockDoc.data();
+                  const stockRef = stockDoc.ref;
+                  const currentStock = parseInt(stockData.realTimeStock || 0);
+                  const quantityToDeduct = parseInt(item.quantity || 0);
+                  const newStock = Math.max(0, currentStock - quantityToDeduct);
+                  
+                  await updateDoc(stockRef, {
+                    realTimeStock: newStock,
+                    updatedAt: serverTimestamp()
+                  });
+                }
+              } else {
+                console.log(`✅ FIFO Stock deducted: ${item.name} - ${item.quantity} units from batches:`, 
+                  deductionResult.updatedBatches?.map(b => b.batchNumber).join(', ') || 'N/A');
+              }
             } else {
-              console.warn(`⚠️ Stock not found for product ${item.id} (${item.name}) at branch ${billData.branchId}`);
+              // No batches provided, use FIFO to determine which batches to use
+              const deductionResult = await inventoryService.deductStockFIFO({
+                branchId: billData.branchId,
+                productId: item.id,
+                quantity: item.quantity,
+                reason: 'Transaction Sale',
+                notes: `Bill ID: ${docRef.id}, Product: ${item.name}`,
+                createdBy: billData.createdBy || 'system',
+                productName: item.name || 'Unknown Product'
+              });
+              
+              if (!deductionResult.success) {
+                console.warn(`⚠️ FIFO deduction failed for ${item.name}:`, deductionResult.message);
+                // Fallback to old method if FIFO fails
+                const stockQuery = query(
+                  collection(db, 'stocks'),
+                  where('productId', '==', item.id),
+                  where('branchId', '==', billData.branchId),
+                  where('status', '==', 'active')
+                );
+                
+                const stockSnapshot = await getDocs(stockQuery);
+                if (!stockSnapshot.empty) {
+                  const stockDoc = stockSnapshot.docs[0];
+                  const stockData = stockDoc.data();
+                  const stockRef = stockDoc.ref;
+                  const currentStock = parseInt(stockData.realTimeStock || 0);
+                  const quantityToDeduct = parseInt(item.quantity || 0);
+                  const newStock = Math.max(0, currentStock - quantityToDeduct);
+                  
+                  await updateDoc(stockRef, {
+                    realTimeStock: newStock,
+                    updatedAt: serverTimestamp()
+                  });
+                }
+              } else {
+                console.log(`✅ FIFO Stock deducted: ${item.name} - ${item.quantity} units from batches:`, 
+                  deductionResult.updatedBatches?.map(b => b.batchNumber).join(', ') || 'N/A');
+              }
             }
           }
           
-          // Commit all stock deductions
-          await stockBatch.commit();
-          console.log(`✅ Stock deduction completed for ${productItems.length} product(s)`);
+          console.log(`✅ FIFO Stock deduction completed for ${productItems.length} product(s)`);
         }
       } catch (stockError) {
         console.error('Error deducting stock:', stockError);

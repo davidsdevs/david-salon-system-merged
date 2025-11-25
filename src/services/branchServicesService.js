@@ -25,6 +25,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { logActivity } from './activityService';
+import { getFullName } from '../utils/helpers';
 import toast from 'react-hot-toast';
 
 /**
@@ -120,24 +121,93 @@ export const setBranchPrice = async (serviceId, branchId, price, currentUser) =>
     const branchPricing = currentData.branchPricing || {};
     const oldPrice = branchPricing[branchId];
     
-    // Only track history if price actually changed
-    if (oldPrice !== undefined && oldPrice !== price) {
-      // Record price change history
-      const priceHistoryRef = collection(db, 'servicePriceHistory');
-      await addDoc(priceHistoryRef, {
-        serviceId,
-        serviceName: currentData.name,
-        branchId,
-        oldPrice,
-        newPrice: price,
-        changedBy: currentUser.uid,
-        changedByName: currentUser.displayName || currentUser.email || 'Unknown',
-        changedAt: Timestamp.now()
+    // Convert prices to numbers for proper comparison
+    const oldPriceNum = (oldPrice !== undefined && oldPrice !== null) ? parseFloat(oldPrice) : null;
+    const newPriceNum = parseFloat(price);
+    
+    // Validate new price
+    if (isNaN(newPriceNum) || newPriceNum < 0) {
+      throw new Error('Invalid price value');
+    }
+    
+    // Track history if price actually changed (including first-time price setting)
+    // Use a small epsilon for floating point comparison
+    const EPSILON = 0.01;
+    const priceChanged = oldPriceNum === null || oldPriceNum === undefined || Math.abs(oldPriceNum - newPriceNum) > EPSILON;
+    
+    if (priceChanged) {
+      try {
+        // Record price change history in services_price_history collection
+        const priceHistoryRef = collection(db, 'services_price_history');
+        
+        // Get user display name - fetch from Firestore to ensure we have full name
+        let changedByName = 'Unknown';
+        let changedByUid = currentUser?.uid || currentUser?.id;
+        
+        if (changedByUid) {
+          try {
+            // Fetch user data from Firestore to get full name
+            const userDoc = await getDoc(doc(db, 'users', changedByUid));
+            if (userDoc.exists()) {
+              const userDocData = userDoc.data();
+              changedByName = getFullName(userDocData) || userDocData.email || 'Unknown';
+            } else if (currentUser?.displayName) {
+              changedByName = currentUser.displayName;
+            } else if (currentUser?.email) {
+              changedByName = currentUser.email;
+            }
+          } catch (fetchError) {
+            console.warn('Could not fetch user name from Firestore, using fallback:', fetchError);
+            // Fallback to available data
+            if (currentUser?.displayName) {
+              changedByName = currentUser.displayName;
+            } else if (currentUser?.firstName) {
+              changedByName = `${currentUser.firstName} ${currentUser.lastName || ''}`.trim();
+            } else if (currentUser?.email) {
+              changedByName = currentUser.email;
+            }
+          }
+        }
+        
+        const historyData = {
+          serviceId,
+          serviceName: currentData.name || currentData.serviceName,
+          branchId,
+          oldPrice: (oldPriceNum !== null && oldPriceNum !== undefined && !isNaN(oldPriceNum)) ? oldPriceNum : 0,
+          newPrice: newPriceNum,
+          changedBy: changedByUid || currentUser?.uid || currentUser?.id,
+          changedByName: changedByName,
+          changedAt: Timestamp.now(),
+          createdAt: Timestamp.now()
+        };
+        
+        const historyDocRef = await addDoc(priceHistoryRef, historyData);
+        console.log('Price history saved to services_price_history:', { 
+          historyId: historyDocRef.id,
+          serviceId, 
+          serviceName: historyData.serviceName,
+          branchId, 
+          oldPrice: historyData.oldPrice, 
+          newPrice: historyData.newPrice,
+          changedBy: historyData.changedByName
+        });
+      } catch (historyError) {
+        // Log error but don't fail the price update
+        console.error('Error saving price history (continuing with price update):', historyError);
+        toast.error('Price updated but failed to save history. Please check console.');
+      }
+    } else {
+      console.log('Price history not saved - no change detected:', { 
+        serviceId, 
+        branchId, 
+        oldPrice: oldPriceNum, 
+        newPrice: newPriceNum,
+        difference: oldPriceNum !== null ? Math.abs(oldPriceNum - newPriceNum) : 'N/A'
       });
     }
     
-    // Update or add this branch's price (direct value)
-    branchPricing[branchId] = price;
+    // Update or add this branch's price (direct value) - store as number
+    branchPricing[branchId] = newPriceNum;
     
     await updateDoc(serviceRef, {
       branchPricing,

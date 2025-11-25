@@ -49,7 +49,9 @@ import OperationalManagerInventory from '../pages/operational-manager/Inventory'
 import OperationalManagerPurchaseOrders from '../pages/operational-manager/PurchaseOrders';
 import OperationalManagerDeposits from '../pages/operational-manager/Deposits';
 import PriceHistoryAnalytics from '../pages/operational-manager/PriceHistoryAnalytics';
+import OperationalManagerPromotions from '../pages/operational-manager/Promotions';
 import CalendarCombined from '../pages/operational-manager/CalendarCombined';
+import OperationalManagerLeaveManagement from '../pages/operational-manager/LeaveManagement';
 import BranchManagerDashboard from '../pages/branch-manager/Dashboard';
 import StaffManagement from '../pages/branch-manager/StaffManagement';
 import Settings from '../pages/branch-manager/Settings';
@@ -57,6 +59,7 @@ import ServicesManagement from '../pages/branch-manager/ServicesManagement';
 import BranchProducts from '../pages/branch-manager/BranchProducts';
 import BranchPageContents from '../pages/branch-manager/BranchPageContents';
 import CalendarManagement from '../pages/branch-manager/CalendarManagement';
+import LeaveManagement from '../pages/branch-manager/LeaveManagement';
 import BranchSettings from '../pages/branch-manager/BranchSettings';
 import BranchManagerAppointments from '../pages/branch-manager/Appointments';
 import BranchManagerBilling from '../pages/branch-manager/Billing';
@@ -66,6 +69,7 @@ import BranchManagerPromotions from '../pages/branch-manager/Promotions';
 import BranchManagerStylistPortfolios from '../pages/branch-manager/StylistPortfolios';
 import BranchManagerReports from '../pages/branch-manager/Reports';
 import BranchManagerInventory from '../pages/branch-manager/Inventory';
+import Commissions from '../pages/branch-manager/Commissions';
 import ReceptionistDashboard from '../pages/receptionist/Dashboard';
 import ReceptionistAppointments from '../pages/receptionist/Appointments';
 import ReceptionistArrivals from '../pages/receptionist/Arrivals';
@@ -76,6 +80,7 @@ import ReceptionistServices from '../pages/receptionist/Services';
 import ReceptionistProducts from '../pages/receptionist/Products';
 import StylistDashboard from '../pages/stylist/Dashboard';
 import StylistAppointments from '../pages/stylist/Appointments';
+import StylistLeaveManagement from '../pages/stylist/LeaveManagement';
 import ClientDashboard from '../pages/client/Dashboard';
 import ClientAppointments from '../pages/client/Appointments';
 import ClientProfile from '../pages/client/Profile';
@@ -216,7 +221,9 @@ const AppRoutes = () => {
         <Route path="purchase-orders" element={<OperationalManagerPurchaseOrders />} />
         <Route path="deposits" element={<OperationalManagerDeposits />} />
         <Route path="price-history" element={<PriceHistoryAnalytics />} />
+        <Route path="promotions" element={<OperationalManagerPromotions />} />
         <Route path="calendar" element={<CalendarCombined />} />
+        <Route path="leave-management" element={<OperationalManagerLeaveManagement />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -232,6 +239,7 @@ const AppRoutes = () => {
         <Route index element={<BranchManagerDashboard />} />
         <Route path="staff" element={<StaffManagement />} />
         <Route path="calendar" element={<CalendarManagement />} />
+        <Route path="leave-management" element={<LeaveManagement />} />
         <Route path="settings" element={<Settings />} />
         <Route path="settings/services" element={<ServicesManagement />} />
         <Route path="settings/products" element={<BranchProducts />} />
@@ -245,6 +253,7 @@ const AppRoutes = () => {
               <Route path="promotions" element={<BranchManagerPromotions />} />
               <Route path="stylist-portfolios" element={<BranchManagerStylistPortfolios />} />
               <Route path="inventory" element={<BranchManagerInventory />} />
+              <Route path="commissions" element={<Commissions />} />
         <Route path="profile" element={<Profile />} />
       </Route>
 
@@ -280,6 +289,7 @@ const AppRoutes = () => {
       >
         <Route index element={<StylistDashboard />} />
         <Route path="appointments" element={<StylistAppointments />} />
+        <Route path="leave-management" element={<StylistLeaveManagement />} />
         <Route path="clients" element={<div className="p-6">Clients - Coming Soon</div>} />
         <Route path="profile" element={<Profile />} />
       </Route>

@@ -38,18 +38,27 @@ export const createPromotion = async (promotionData, currentUser) => {
     const promotion = {
       name: promotionData.name,
       description: promotionData.description || '',
+      promotionCode: promotionData.promotionCode || '',
       type: promotionData.type || 'discount', // 'discount', 'points', 'free_service'
       discountType: promotionData.discountType || 'percentage', // 'percentage' or 'fixed'
       discountValue: promotionData.discountValue || 0,
       // Targeting
-      branchId: promotionData.branchId || null, // null = all branches
+      branchId: promotionData.branchId !== undefined ? promotionData.branchId : null, // null = all branches (system-wide)
       targetSegment: promotionData.targetSegment || 'all', // 'all', 'bronze', 'silver', 'gold', 'platinum'
+      applicableTo: promotionData.applicableTo || 'all',
       applicableServices: promotionData.applicableServices || [], // Empty = all services
+      specificServices: promotionData.specificServices || [],
+      specificProducts: promotionData.specificProducts || [],
+      // Usage
+      usageType: promotionData.usageType || 'repeating',
+      maxUses: promotionData.maxUses || null,
+      usedBy: promotionData.usedBy || [],
+      usageCount: promotionData.usageCount || 0,
       // Validity
       startDate: Timestamp.fromDate(new Date(promotionData.startDate)),
       endDate: Timestamp.fromDate(new Date(promotionData.endDate)),
       // Status
-      isActive: true,
+      isActive: promotionData.isActive !== undefined ? promotionData.isActive : true,
       // Metadata
       createdBy: currentUser?.uid || 'system',
       createdByName: currentUser?.displayName || currentUser?.firstName || 'System',
@@ -289,15 +298,26 @@ export const validatePromotionCode = async (code, branchId, clientId = null) => 
 
     const codeUpper = code.trim().toUpperCase();
     
-    // Find promotion by code and branch
+    // Find promotion by code - check both branch-specific and system-wide (branchId === null)
     const promotionsRef = collection(db, PROMOTIONS_COLLECTION);
-    const q = query(
+    // First, try to find branch-specific promotion
+    let q = query(
       promotionsRef,
       where('promotionCode', '==', codeUpper),
       where('branchId', '==', branchId)
     );
     
-    const snapshot = await getDocs(q);
+    let snapshot = await getDocs(q);
+    
+    // If not found, check for system-wide promotion (branchId === null)
+    if (snapshot.empty) {
+      q = query(
+        promotionsRef,
+        where('promotionCode', '==', codeUpper),
+        where('branchId', '==', null)
+      );
+      snapshot = await getDocs(q);
+    }
     
     if (snapshot.empty) {
       return {

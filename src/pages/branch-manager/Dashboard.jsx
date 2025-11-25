@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { 
   Users, 
   Calendar, 
-  DollarSign, 
+  Banknote, 
   Package, 
   TrendingUp, 
   Clock,
@@ -96,7 +96,7 @@ const BranchManagerDashboard = () => {
     {
       title: 'Monthly Revenue',
       value: `₱${(stats?.revenue || 0).toLocaleString()}`,
-      icon: DollarSign,
+      icon: Banknote,
       color: 'bg-purple-500',
       trend: null,
       note: 'Coming soon'

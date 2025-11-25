@@ -62,6 +62,7 @@ export const ROUTES = {
   OPERATIONAL_MANAGER_USERS: '/operational-manager/users',
   OPERATIONAL_MANAGER_ACTIVITY: '/operational-manager/activity',
   OPERATIONAL_MANAGER_PRICE_HISTORY: '/operational-manager/price-history',
+  OPERATIONAL_MANAGER_PROMOTIONS: '/operational-manager/promotions',
   OPERATIONAL_MANAGER_CALENDAR: '/operational-manager/calendar',
   OPERATIONAL_MANAGER_CALENDAR_APPROVAL: '/operational-manager/calendar-approval',
   

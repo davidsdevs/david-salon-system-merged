@@ -38,6 +38,7 @@ import { format } from 'date-fns';
 import { collection, getDocs, query, where, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { inventoryService } from '../../services/inventoryService';
+import toast from 'react-hot-toast';
 
 // Debounce hook for search
 const useDebounce = (value, delay) => {
@@ -330,8 +331,65 @@ const PurchaseOrders = () => {
     }
   };
 
-  // Add product to order
-  const addProductToOrder = (product) => {
+  // Get total current stock for a product (sum of all batch stocks)
+  const getTotalCurrentStock = async (productId) => {
+    if (!productId || !userData?.branchId) return 0;
+    
+    try {
+      // Get all batch stocks for this product
+      const stocksRef = collection(db, 'stocks');
+      const stocksQuery = query(
+        stocksRef,
+        where('branchId', '==', userData.branchId),
+        where('productId', '==', productId),
+        where('status', '==', 'active')
+      );
+      
+      const stocksSnapshot = await getDocs(stocksQuery);
+      let totalStock = 0;
+      
+      stocksSnapshot.forEach((doc) => {
+        const stockData = doc.data();
+        const realTimeStock = stockData.realTimeStock || 0;
+        totalStock += realTimeStock;
+      });
+      
+      return totalStock;
+    } catch (error) {
+      console.error('Error getting total stock:', error);
+      return 0;
+    }
+  };
+
+  // Add product to order with stock validation
+  const addProductToOrder = async (product) => {
+    // Check current stock before adding
+    const currentStock = await getTotalCurrentStock(product.id);
+    const REORDER_THRESHOLD = 5; // Only allow ordering if stock is 5 or less
+    
+    if (currentStock > REORDER_THRESHOLD) {
+      toast.error(
+        `${product.name} has ${currentStock} units in stock. Only order when stock is ${REORDER_THRESHOLD} or less.`,
+        { duration: 4000 }
+      );
+      
+      const confirmOrder = window.confirm(
+        `⚠️ Warning: ${product.name} currently has ${currentStock} units in stock.\n\n` +
+        `Reorder Policy: You should only order when stock is ${REORDER_THRESHOLD} or less.\n\n` +
+        `Do you want to proceed anyway? (Not recommended)`
+      );
+      
+      if (!confirmOrder) {
+        return; // User cancelled
+      }
+      
+      toast('Ordering despite high stock level', { icon: '⚠️', duration: 3000 });
+    } else if (currentStock > 0 && currentStock <= REORDER_THRESHOLD) {
+      toast.success(`${product.name} has ${currentStock} units - Good time to reorder!`, { duration: 3000 });
+    } else if (currentStock === 0) {
+      toast.error(`${product.name} is out of stock - Order immediately!`, { duration: 4000 });
+    }
+    
     const existingItem = orderItems.find(item => item.productId === product.id);
     if (existingItem) {
       // Update quantity if already in order
@@ -349,7 +407,8 @@ const PurchaseOrders = () => {
         unitPrice: product.unitCost || 0,
         totalPrice: product.unitCost || 0,
         category: product.category || null,
-        sku: product.sku || null
+        sku: product.sku || null,
+        currentStock: currentStock // Store current stock for display
       }]);
     }
   };
@@ -421,6 +480,49 @@ const PurchaseOrders = () => {
     return cleaned;
   };
 
+  // Generate next incremental PO number based on existing purchase orders for this branch
+  const generateNextPONumber = () => {
+    if (!userData?.branchId) {
+      throw new Error('Branch ID is required to generate PO number');
+    }
+
+    // Get first 3 characters of branch ID (uppercase)
+    const branchPrefix = userData.branchId.substring(0, 3).toUpperCase();
+    
+    // Filter POs for this branch only (should already be filtered, but double-check)
+    const branchPOs = purchaseOrders.filter(po => po.branchId === userData.branchId);
+    
+    if (!branchPOs || branchPOs.length === 0) {
+      return `PO-${branchPrefix}-${String(1).padStart(2, '0')}`;
+    }
+
+    // Extract numeric parts from existing PO numbers with branch prefix
+    // Handles formats like: PO-ABC-01, PO-ABC-1, PO-2024-0001 (legacy), etc.
+    const poNumbers = branchPOs
+      .map(po => {
+        const orderId = po.orderId || '';
+        // Match patterns: PO-XXX-NN or PO-XXX-N (branch prefix) or legacy formats
+        const branchPrefixMatch = orderId.match(new RegExp(`PO-${branchPrefix}-(\\d+)`));
+        if (branchPrefixMatch) {
+          return parseInt(branchPrefixMatch[1], 10);
+        }
+        // Also handle legacy formats for migration
+        const legacyMatch = orderId.match(/PO-(\d{4}-)?(\d+)/);
+        if (legacyMatch) {
+          return parseInt(legacyMatch[legacyMatch.length - 1], 10);
+        }
+        return 0;
+      })
+      .filter(num => !isNaN(num) && num > 0);
+
+    // Find the maximum number for this branch
+    const maxNumber = poNumbers.length > 0 ? Math.max(...poNumbers) : 0;
+    
+    // Increment and format with branch prefix
+    const nextNumber = maxNumber + 1;
+    return `PO-${branchPrefix}-${String(nextNumber).padStart(2, '0')}`;
+  };
+
   // Handle submit order
   const handleSubmitOrder = async (e) => {
     if (e) {
@@ -451,13 +553,13 @@ const PurchaseOrders = () => {
       setIsSubmitting(true);
       setError(null);
 
-      // Generate order ID
-      const orderId = `PO-${new Date().getFullYear()}-${String(purchaseOrders.length + 1).padStart(4, '0')}`;
-
       // Validate all required fields before creating document
       if (!userData?.branchId) {
         throw new Error('Branch ID is missing. Please refresh the page.');
       }
+
+      // Generate incremental order ID
+      const orderId = generateNextPONumber();
 
       if (!userData?.uid && !userData?.id) {
         throw new Error('User ID is missing. Please refresh the page.');
@@ -674,6 +776,9 @@ const PurchaseOrders = () => {
         branchId: userData.branchId,
         items: itemsWithExpiration,
         receivedBy: userData.uid || userData.id,
+        receivedByName: (userData.firstName && userData.lastName 
+          ? `${userData.firstName} ${userData.lastName}`.trim() 
+          : (userData.email || 'Unknown')),
         receivedAt: new Date()
       };
 
@@ -1250,7 +1355,7 @@ const PurchaseOrders = () => {
                                     className={`p-3 cursor-pointer hover:border-[#160B53] hover:shadow-lg transition-all relative ${
                                       isInOrder ? 'border-2 border-green-500 bg-green-50' : ''
                                     }`}
-                                    onClick={() => addProductToOrder(product)}
+                                    onClick={async () => await addProductToOrder(product)}
                                   >
                                     {/* Product Image */}
                                     <div className="relative w-full aspect-square mb-3 bg-gray-100 rounded-lg overflow-hidden">
@@ -1294,9 +1399,9 @@ const PurchaseOrders = () => {
                                         <Button
                                           type="button"
                                           size="sm"
-                                          onClick={(e) => {
+                                          onClick={async (e) => {
                                             e.stopPropagation();
-                                            addProductToOrder(product);
+                                            await addProductToOrder(product);
                                           }}
                                           className={`h-7 px-2 text-xs ${
                                             isInOrder 
@@ -1383,6 +1488,18 @@ const PurchaseOrders = () => {
                                     <h4 className="font-semibold text-gray-900 truncate">{item.productName}</h4>
                                     {item.sku && (
                                       <p className="text-xs text-gray-500">SKU: {item.sku}</p>
+                                    )}
+                                    {item.currentStock !== undefined && (
+                                      <p className={`text-xs mt-1 ${
+                                        item.currentStock > 5 
+                                          ? 'text-orange-600 font-medium' 
+                                          : item.currentStock === 0 
+                                          ? 'text-red-600 font-medium' 
+                                          : 'text-green-600'
+                                      }`}>
+                                        Current Stock: {item.currentStock} units
+                                        {item.currentStock > 5 && ' (High stock - ordering not recommended)'}
+                                      </p>
                                     )}
                                   </div>
                                   

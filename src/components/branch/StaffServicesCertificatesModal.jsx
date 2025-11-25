@@ -238,7 +238,7 @@ const StaffServicesCertificatesModal = ({
                             </p>
                           )}
                           <p className="text-xs text-primary-600 mt-1">
-                            Γé▒{parseFloat(service.price || 0).toLocaleString()}
+                            ₱{parseFloat(service.price || 0).toLocaleString()}
                           </p>
                         </div>
                       </label>
