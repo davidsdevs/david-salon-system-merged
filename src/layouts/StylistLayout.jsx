@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import { LayoutDashboard, Calendar, Users, CalendarDays } from 'lucide-react';
+import { LayoutDashboard, Calendar, CalendarDays, User, CheckCircle, History } from 'lucide-react';
 import Header from '../components/layout/Header';
 import Sidebar from '../components/layout/Sidebar';
 import { ROUTES } from '../utils/constants';
@@ -11,10 +11,12 @@ const StylistLayout = () => {
   const menuItems = [
     { path: ROUTES.STYLIST_DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
     { section: 'My Work' },
-    { path: ROUTES.STYLIST_APPOINTMENTS, label: 'Appointments', icon: Calendar },
-    { path: ROUTES.STYLIST_SCHEDULE, label: 'Schedule', icon: Calendar },
-    { path: '/stylist/leave-management', label: 'Leave Management', icon: CalendarDays },
-    { path: ROUTES.STYLIST_CLIENTS, label: 'Clients', icon: Users },
+    { path: ROUTES.STYLIST_APPOINTMENTS, label: 'My Appointments', icon: Calendar },
+    { path: '/stylist/check-ins', label: 'Check-Ins', icon: CheckCircle },
+    { path: '/stylist/service-history', label: 'Service History', icon: History },
+    { path: '/stylist/leave-management', label: 'Leave Requests', icon: CalendarDays },
+    { section: 'Account' },
+    { path: '/stylist/profile', label: 'My Profile', icon: User },
   ];
 
   return (

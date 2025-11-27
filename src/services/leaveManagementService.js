@@ -89,22 +89,50 @@ export const getLeaveRequestsByBranch = async (branchId) => {
  */
 export const getLeaveRequestsByEmployee = async (employeeId) => {
   try {
-    const q = query(
-      collection(db, LEAVE_COLLECTION),
-      where('employeeId', '==', employeeId),
-      orderBy('startDate', 'desc')
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      startDate: doc.data().startDate?.toDate(),
-      endDate: doc.data().endDate?.toDate(),
-      requestedAt: doc.data().requestedAt?.toDate(),
-      approvedAt: doc.data().approvedAt?.toDate(),
-      rejectedAt: doc.data().rejectedAt?.toDate(),
-      cancelledAt: doc.data().cancelledAt?.toDate(),
-    }));
+    // Try with orderBy first, fallback to without if index doesn't exist
+    try {
+      const q = query(
+        collection(db, LEAVE_COLLECTION),
+        where('employeeId', '==', employeeId),
+        orderBy('startDate', 'desc')
+      );
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        startDate: doc.data().startDate?.toDate(),
+        endDate: doc.data().endDate?.toDate(),
+        requestedAt: doc.data().requestedAt?.toDate(),
+        approvedAt: doc.data().approvedAt?.toDate(),
+        rejectedAt: doc.data().rejectedAt?.toDate(),
+        cancelledAt: doc.data().cancelledAt?.toDate(),
+      }));
+    } catch (orderByError) {
+      // If orderBy fails (index missing), fetch without it and sort in memory
+      console.warn('OrderBy failed for employee leave requests, fetching without orderBy:', orderByError.message);
+      const q = query(
+        collection(db, LEAVE_COLLECTION),
+        where('employeeId', '==', employeeId)
+      );
+      const snapshot = await getDocs(q);
+      const requests = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        startDate: doc.data().startDate?.toDate(),
+        endDate: doc.data().endDate?.toDate(),
+        requestedAt: doc.data().requestedAt?.toDate(),
+        approvedAt: doc.data().approvedAt?.toDate(),
+        rejectedAt: doc.data().rejectedAt?.toDate(),
+        cancelledAt: doc.data().cancelledAt?.toDate(),
+      }));
+      
+      // Sort by startDate descending in memory
+      return requests.sort((a, b) => {
+        const aTime = a.startDate?.getTime() || 0;
+        const bTime = b.startDate?.getTime() || 0;
+        return bTime - aTime;
+      });
+    }
   } catch (error) {
     console.error('Error fetching leave requests by employee:', error);
     toast.error('Failed to load employee leave requests');

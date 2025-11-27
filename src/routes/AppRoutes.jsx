@@ -84,9 +84,14 @@ import ReceptionistServices from '../pages/receptionist/Services';
 import ReceptionistProducts from '../pages/receptionist/Products';
 import StylistDashboard from '../pages/stylist/Dashboard';
 import StylistAppointments from '../pages/stylist/Appointments';
+import StylistCheckIns from '../pages/stylist/CheckIns';
+import StylistServiceHistory from '../pages/stylist/ServiceHistory';
 import StylistLeaveManagement from '../pages/stylist/LeaveManagement';
+import StylistProfile from '../pages/stylist/Profile';
 import ClientDashboard from '../pages/client/Dashboard';
 import ClientAppointments from '../pages/client/Appointments';
+import ClientProducts from '../pages/client/Products';
+import ClientRewards from '../pages/client/Rewards';
 import ClientProfile from '../pages/client/Profile';
 import Profile from '../pages/common/Profile';
 import InventoryDashboard from '../pages/inventory/Dashboard';
@@ -317,9 +322,10 @@ const AppRoutes = () => {
       >
         <Route index element={<StylistDashboard />} />
         <Route path="appointments" element={<StylistAppointments />} />
+        <Route path="check-ins" element={<StylistCheckIns />} />
+        <Route path="service-history" element={<StylistServiceHistory />} />
         <Route path="leave-management" element={<StylistLeaveManagement />} />
-        <Route path="clients" element={<div className="p-6">Clients - Coming Soon</div>} />
-        <Route path="profile" element={<Profile />} />
+        <Route path="profile" element={<StylistProfile />} />
       </Route>
 
       {/* Client routes */}
@@ -333,6 +339,8 @@ const AppRoutes = () => {
       >
               <Route index element={<ClientDashboard />} />
               <Route path="appointments" element={<ClientAppointments />} />
+              <Route path="products" element={<ClientProducts />} />
+              <Route path="rewards" element={<ClientRewards />} />
               <Route path="profile" element={<ClientProfile />} />
               <Route path="settings" element={<Profile />} />
       </Route>

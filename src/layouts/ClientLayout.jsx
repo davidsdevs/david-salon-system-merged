@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import { LayoutDashboard, Calendar, History, User } from 'lucide-react';
+import { LayoutDashboard, Calendar, ShoppingBag, Gift, User } from 'lucide-react';
 import Header from '../components/layout/Header';
 import Sidebar from '../components/layout/Sidebar';
 import { ROUTES } from '../utils/constants';
@@ -12,7 +12,9 @@ const ClientLayout = () => {
     { path: ROUTES.CLIENT_DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
     { section: 'Services' },
     { path: '/client/appointments', label: 'Appointments', icon: Calendar },
-    { path: ROUTES.CLIENT_HISTORY, label: 'History', icon: History },
+    { path: '/client/products', label: 'Products', icon: ShoppingBag },
+    { path: '/client/rewards', label: 'Rewards', icon: Gift },
+    { section: 'Account' },
     { path: ROUTES.CLIENT_PROFILE, label: 'Profile', icon: User },
   ];
 

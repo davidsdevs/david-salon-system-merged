@@ -42,7 +42,7 @@ const StylistLeaveManagement = () => {
       setLeaveRequests(requests);
     } catch (error) {
       console.error('Error fetching leave requests:', error);
-      toast.error('Failed to load leave requests');
+      // Service already shows toast, don't duplicate
     } finally {
       setLoading(false);
     }
