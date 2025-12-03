@@ -806,13 +806,22 @@ const ReceptionistAppointments = () => {
           <h1 className="text-2xl font-bold text-gray-900">Appointments</h1>
           <p className="text-gray-600">Manage bookings for registered and guest clients</p>
         </div>
-        <button
-          onClick={handleCreateAppointment}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          <Plus className="w-5 h-5" />
-          New Appointment
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href="/receptionist/arrivals"
+            className="flex items-center gap-2 px-4 py-2 border border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-colors"
+          >
+            <Check className="w-5 h-5" />
+            Go to Check-ins
+          </a>
+          <button
+            onClick={handleCreateAppointment}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            New Appointment
+          </button>
+        </div>
       </div>
 
       {/* Search Bar */}
@@ -1074,18 +1083,16 @@ const ReceptionistAppointments = () => {
                         )}
                         
                         {apt.status === APPOINTMENT_STATUS.CONFIRMED && (
-                          <button
-                            onClick={() => handleCheckIn(apt)}
-                            disabled={processingStatus === apt.id || apt.isCheckedIn}
-                            className={`px-4 py-2 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
-                              apt.isCheckedIn 
-                                ? 'bg-gray-400 cursor-not-allowed' 
-                                : 'bg-green-600 hover:bg-green-700'
-                            }`}
-                          >
-                            {processingStatus === apt.id && <LoadingSpinner size="sm" />}
-                            {processingStatus === apt.id ? 'Checking in...' : apt.isCheckedIn ? 'Checked In' : 'Check In'}
-                          </button>
+                          apt.isCheckedIn ? (
+                            <span className="px-3 py-2 bg-green-100 text-green-700 text-sm font-medium rounded-lg flex items-center gap-2">
+                              <CheckCircle className="w-4 h-4" />
+                              Checked In
+                            </span>
+                          ) : (
+                            <span className="px-3 py-2 bg-blue-100 text-blue-700 text-sm font-medium rounded-lg">
+                              Ready for Check-in
+                            </span>
+                          )
                         )}
                         
                         {apt.status !== APPOINTMENT_STATUS.COMPLETED && apt.status !== APPOINTMENT_STATUS.CANCELLED && (

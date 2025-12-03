@@ -258,9 +258,13 @@ const BillingModalPOS = ({
     if (isOpen) {
       // Initialize client info (for walk-in or from appointment)
       const isWalkIn = appointment?.isWalkIn || !appointment?.clientId;
+      // Check if this is a checkout with existing services (from arrivals - walk-in or appointment)
+      const hasExistingServices = appointment?.services?.length > 0 || appointment?.serviceName;
+      // For walk-in checkout, we should pre-fill with arrival data
+      const isWalkInCheckout = isWalkIn && hasExistingServices && mode === 'billing';
       
-      if (isWalkIn) {
-        // For walk-in, start with empty fields
+      if (isWalkIn && !isWalkInCheckout) {
+        // For new walk-in (no existing services), start with empty fields
         setFormData(prev => ({
           ...prev,
           clientName: '',
@@ -271,6 +275,19 @@ const BillingModalPOS = ({
         }));
         setMatchedClient(null);
         setClientSearch('');
+        setShowClientList(false);
+      } else if (isWalkInCheckout) {
+        // For walk-in checkout with existing services, pre-fill client info from arrival
+        setClientSearch(appointment?.clientName || '');
+        setFormData(prev => ({
+          ...prev,
+          clientName: appointment?.clientName || '',
+          clientPhone: appointment?.clientPhone || '',
+          clientEmail: appointment?.clientEmail || '',
+          clientId: appointment?.clientId || '',
+          items: [] // Will be filled below
+        }));
+        setMatchedClient(null);
         setShowClientList(false);
       } else {
         // Sync clientSearch with formData.clientName for appointment-based billing
@@ -287,8 +304,9 @@ const BillingModalPOS = ({
         setMatchedClient(null);
       }
 
-      // If appointment exists and has services/products, load them
-      if (appointment && !isWalkIn) {
+      // If appointment/arrival exists and has services/products, load them
+      // This now includes walk-in checkouts with existing services
+      if (appointment && (!isWalkIn || isWalkInCheckout)) {
         // Load services
         const serviceItems = appointment.services && appointment.services.length > 0
           ? appointment.services.map(svc => {

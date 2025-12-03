@@ -261,6 +261,7 @@ export const createWalkInArrival = async (walkInData, currentUser) => {
 
 /**
  * Update arrival status
+ * Also syncs appointment status when arrival is completed
  */
 export const updateArrivalStatus = async (arrivalId, status, currentUser) => {
   try {
@@ -290,6 +291,38 @@ export const updateArrivalStatus = async (arrivalId, status, currentUser) => {
     
     await updateDoc(arrivalRef, updates);
 
+    // Sync appointment status if this arrival is linked to an appointment
+    if (arrival.appointmentId && !arrival.isWalkIn) {
+      try {
+        const appointmentRef = doc(db, 'appointments', arrival.appointmentId);
+        const appointmentDoc = await getDoc(appointmentRef);
+        
+        if (appointmentDoc.exists()) {
+          let appointmentStatus = null;
+          
+          // Map arrival status to appointment status
+          if (status === ARRIVAL_STATUS.IN_SERVICE) {
+            appointmentStatus = 'in_service';
+          } else if (status === ARRIVAL_STATUS.COMPLETED) {
+            appointmentStatus = 'completed';
+          } else if (status === ARRIVAL_STATUS.CANCELLED) {
+            appointmentStatus = 'cancelled';
+          }
+          
+          if (appointmentStatus) {
+            await updateDoc(appointmentRef, {
+              status: appointmentStatus,
+              updatedAt: serverTimestamp()
+            });
+            console.log(`✅ Synced appointment ${arrival.appointmentId} status to ${appointmentStatus}`);
+          }
+        }
+      } catch (syncError) {
+        // Log but don't fail the main operation
+        console.error('Error syncing appointment status:', syncError);
+      }
+    }
+
     // Log activity
     await logActivity({
       performedBy: currentUser.uid,
@@ -300,7 +333,8 @@ export const updateArrivalStatus = async (arrivalId, status, currentUser) => {
       metadata: { 
         status,
         isWalkIn: arrival.isWalkIn,
-        clientName: arrival.clientName
+        clientName: arrival.clientName,
+        appointmentId: arrival.appointmentId || null
       }
     });
 
