@@ -3,7 +3,7 @@
  * Handles all interactions with the leave_requests Firestore collection
  */
 
-import { collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, where, orderBy, Timestamp, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, query, where, orderBy, limit, startAfter, Timestamp, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { logActivity } from './activityService';
 import toast from 'react-hot-toast';
@@ -64,37 +64,46 @@ export const getLeaveRequestsByBranch = async (branchId) => {
 /**
  * Get leave requests for a specific employee
  * @param {string} employeeId - Employee ID
- * @returns {Promise<Array>} Array of leave requests
+ * @param {number} pageSize - Number of items per page (default: 20)
+ * @param {Object} lastDoc - Last document for pagination (optional)
+ * @returns {Promise<Object>} Object with requests array and pagination info
  */
-export const getLeaveRequestsByEmployee = async (employeeId) => {
+/**
+ * Get leave requests for a specific employee (with pagination support)
+ * @param {string} employeeId - Employee ID
+ * @param {number} pageSize - Number of items per page (default: 20, use large number like 1000 for all)
+ * @param {Object} lastDoc - Last document for pagination (optional)
+ * @returns {Promise<Object>} Object with requests array, hasMore boolean, and lastDoc for pagination
+ */
+export const getLeaveRequestsByEmployee = async (employeeId, pageSize = 20, lastDoc = null) => {
   try {
+    const requestsRef = collection(db, LEAVE_COLLECTION);
+    
     // Try with orderBy first, fallback to without if index doesn't exist
     try {
-      const q = query(
-        collection(db, LEAVE_COLLECTION),
+      let q = query(
+        requestsRef,
         where('employeeId', '==', employeeId),
-        orderBy('startDate', 'desc')
+        orderBy('requestedAt', 'desc'),
+        limit(pageSize + 1) // Fetch one extra to check if there's more
       );
+      
+      if (lastDoc) {
+        q = query(
+          requestsRef,
+          where('employeeId', '==', employeeId),
+          orderBy('requestedAt', 'desc'),
+          startAfter(lastDoc),
+          limit(pageSize + 1)
+        );
+      }
+      
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        startDate: doc.data().startDate?.toDate(),
-        endDate: doc.data().endDate?.toDate(),
-        requestedAt: doc.data().requestedAt?.toDate(),
-        approvedAt: doc.data().approvedAt?.toDate(),
-        rejectedAt: doc.data().rejectedAt?.toDate(),
-        cancelledAt: doc.data().cancelledAt?.toDate(),
-      }));
-    } catch (orderByError) {
-      // If orderBy fails (index missing), fetch without it and sort in memory
-      console.warn('OrderBy failed for employee leave requests, fetching without orderBy:', orderByError.message);
-      const q = query(
-        collection(db, LEAVE_COLLECTION),
-        where('employeeId', '==', employeeId)
-      );
-      const snapshot = await getDocs(q);
-      const requests = snapshot.docs.map(doc => ({
+      const docs = snapshot.docs;
+      const hasMore = docs.length > pageSize;
+      
+      // Remove the extra doc if we fetched more than pageSize
+      const requests = (hasMore ? docs.slice(0, pageSize) : docs).map(doc => ({
         id: doc.id,
         ...doc.data(),
         startDate: doc.data().startDate?.toDate(),
@@ -105,12 +114,49 @@ export const getLeaveRequestsByEmployee = async (employeeId) => {
         cancelledAt: doc.data().cancelledAt?.toDate(),
       }));
       
-      // Sort by startDate descending in memory
-      return requests.sort((a, b) => {
-        const aTime = a.startDate?.getTime() || 0;
-        const bTime = b.startDate?.getTime() || 0;
+      return {
+        requests,
+        hasMore,
+        lastDoc: hasMore ? docs[pageSize - 1] : null
+      };
+    } catch (orderByError) {
+      // If orderBy fails (index missing), fetch without it and sort in memory
+      console.warn('OrderBy failed for employee leave requests, fetching without orderBy:', orderByError.message);
+      let q = query(
+        requestsRef,
+        where('employeeId', '==', employeeId),
+        limit(pageSize * 2) // Fetch more to account for sorting
+      );
+      
+      const snapshot = await getDocs(q);
+      let requests = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        startDate: doc.data().startDate?.toDate(),
+        endDate: doc.data().endDate?.toDate(),
+        requestedAt: doc.data().requestedAt?.toDate(),
+        approvedAt: doc.data().approvedAt?.toDate(),
+        rejectedAt: doc.data().rejectedAt?.toDate(),
+        cancelledAt: doc.data().cancelledAt?.toDate(),
+      }));
+      
+      // Sort by requestedAt descending in memory
+      requests = requests.sort((a, b) => {
+        const aTime = a.requestedAt?.getTime() || 0;
+        const bTime = b.requestedAt?.getTime() || 0;
         return bTime - aTime;
       });
+      
+      // Apply pagination in memory
+      const startIndex = lastDoc ? requests.findIndex(r => r.id === lastDoc.id) + 1 : 0;
+      const paginatedRequests = requests.slice(startIndex, startIndex + pageSize);
+      const hasMore = startIndex + pageSize < requests.length;
+      
+      return {
+        requests: paginatedRequests,
+        hasMore,
+        lastDoc: paginatedRequests.length > 0 ? paginatedRequests[paginatedRequests.length - 1] : null
+      };
     }
   } catch (error) {
     console.error('Error fetching leave requests by employee:', error);
@@ -210,6 +256,7 @@ export const saveLeaveRequest = async (leaveData, currentUser, currentUserData =
     };
 
     if (!leaveData.id) {
+      // New request
       data.requestedAt = Timestamp.now();
       data.requestedBy = currentUser.uid;
       data.requestedByName = currentUser.displayName || currentUser.email || 'Unknown';
@@ -219,6 +266,11 @@ export const saveLeaveRequest = async (leaveData, currentUser, currentUserData =
         data.approvedAt = Timestamp.now();
         data.approvedBy = currentUser.uid;
         data.approvedByName = currentUser.displayName || currentUser.email || 'Unknown';
+      }
+    } else {
+      // Updating existing request - if status is pending, reset requestedAt for queue
+      if (leaveData.status === 'pending' || data.status === 'pending') {
+        data.requestedAt = Timestamp.now(); // Reset createdAt time for queue
       }
     }
 

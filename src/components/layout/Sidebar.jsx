@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { X } from 'lucide-react';
 
-const Sidebar = ({ isOpen, toggleSidebar, menuItems }) => {
+const Sidebar = ({ isOpen, toggleSidebar, menuItems, bottomItems }) => {
   return (
     <>
       {/* Mobile overlay */}
@@ -72,6 +72,34 @@ const Sidebar = ({ isOpen, toggleSidebar, menuItems }) => {
             </div>
           ))}
         </nav>
+
+        {/* Bottom Items (Notifications, etc.) */}
+        {bottomItems && bottomItems.length > 0 && (
+          <div className="border-t border-gray-200 p-4 flex-shrink-0">
+            {bottomItems.map((item, index) => (
+              <NavLink
+                key={index}
+                to={item.path}
+                onClick={toggleSidebar}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+                    isActive
+                      ? 'bg-primary-600 text-white font-medium shadow-sm'
+                      : 'text-gray-700 hover:bg-gray-100'
+                  }`
+                }
+              >
+                {item.icon && <item.icon className="w-5 h-5" />}
+                <span>{item.label}</span>
+                {item.badge && (
+                  <span className="ml-auto bg-red-500 text-white text-xs font-medium px-2 py-0.5 rounded-full">
+                    {item.badge}
+                  </span>
+                )}
+              </NavLink>
+            ))}
+          </div>
+        )}
       </aside>
     </>
   );
