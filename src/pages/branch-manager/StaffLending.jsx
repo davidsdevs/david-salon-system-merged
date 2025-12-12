@@ -3,9 +3,9 @@
  * View and manage stylist lending requests
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { ArrowRight, ArrowLeft, CheckCircle, XCircle, Clock, Building2, User, Calendar, Plus, Search, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getLendingRequests, approveLendingRequest, rejectLendingRequest, cancelLendingRequest } from '../../services/stylistLendingService';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { ArrowRight, ArrowLeft, CheckCircle, XCircle, Clock, Building2, User, Calendar, Plus, Search, Filter, ChevronLeft, ChevronRight, Printer } from 'lucide-react';
+import { getLendingRequests, approveLendingRequest, rejectLendingRequest, cancelLendingRequest, getActiveLendingFromBranch, getActiveLendingForBranch } from '../../services/stylistLendingService';
 import { getBranchById } from '../../services/branchService';
 import { getUserById } from '../../services/userService';
 import { useAuth } from '../../context/AuthContext';
@@ -29,6 +29,12 @@ const StaffLending = () => {
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [requestToApprove, setRequestToApprove] = useState(null);
+  const [branchInfo, setBranchInfo] = useState(null);
+  const [lentOutStylists, setLentOutStylists] = useState([]); // Stylists lent OUT from this branch
+  const [lentInStylists, setLentInStylists] = useState([]); // Stylists lent TO this branch
+  
+  // Print ref
+  const printRef = useRef();
   
   // Big Data Optimizations
   const [searchTerm, setSearchTerm] = useState('');
@@ -45,8 +51,67 @@ const StaffLending = () => {
   useEffect(() => {
     if (userBranch) {
       fetchRequests();
+      fetchBranchInfo();
+      fetchLendingDataForPrint();
     }
   }, [userBranch]);
+
+  const fetchBranchInfo = async () => {
+    try {
+      const branch = await getBranchById(userBranch);
+      setBranchInfo(branch);
+    } catch (error) {
+      console.error('Error fetching branch info:', error);
+    }
+  };
+
+  const fetchLendingDataForPrint = async () => {
+    if (!userBranch) return;
+    
+    try {
+      // Get stylists lent OUT from this branch
+      const lentOut = await getActiveLendingFromBranch(userBranch, null);
+      const lentOutWithDetails = await Promise.all(
+        lentOut.map(async (lending) => {
+          try {
+            const stylist = await getUserById(lending.stylistId);
+            const toBranch = await getBranchById(lending.toBranchId);
+            return {
+              ...lending,
+              stylistName: getFullName(stylist),
+              stylistEmail: stylist.email,
+              toBranchName: toBranch?.branchName || toBranch?.name || 'Unknown Branch'
+            };
+          } catch (error) {
+            return null;
+          }
+        })
+      );
+      setLentOutStylists(lentOutWithDetails.filter(l => l !== null));
+
+      // Get stylists lent TO this branch
+      const lentIn = await getActiveLendingForBranch(userBranch, null);
+      const lentInWithDetails = await Promise.all(
+        lentIn.map(async (lending) => {
+          try {
+            const stylist = await getUserById(lending.stylistId);
+            const fromBranch = await getBranchById(lending.fromBranchId);
+            return {
+              ...lending,
+              stylistName: getFullName(stylist),
+              stylistEmail: stylist.email,
+              fromBranchName: fromBranch?.branchName || fromBranch?.name || 'Unknown Branch'
+            };
+          } catch (error) {
+            return null;
+          }
+        })
+      );
+      setLentInStylists(lentInWithDetails.filter(l => l !== null));
+    } catch (error) {
+      console.error('Error fetching lending data for print:', error);
+    }
+  };
 
   // Debounce search term
   useEffect(() => {
@@ -305,6 +370,116 @@ const StaffLending = () => {
   const pendingRequests = requests.filter(r => r.status === 'pending');
   const myPendingRequests = pendingRequests.filter(r => r.type === 'outgoing'); // My pending requests
 
+  // Print handler
+  const handlePrint = () => {
+    if (!printRef.current) {
+      toast.error('Print content not ready. Please try again.');
+      return;
+    }
+
+    setTimeout(() => {
+      if (!printRef.current) {
+        toast.error('Print content not ready. Please try again.');
+        return;
+      }
+
+      const printContentHTML = printRef.current.innerHTML;
+      
+      let styles = '';
+      try {
+        styles = Array.from(document.styleSheets)
+          .map((sheet) => {
+            try {
+              return Array.from(sheet.cssRules || [])
+                .map((rule) => rule.cssText)
+                .join('\n');
+            } catch (e) {
+              return '';
+            }
+          })
+          .join('\n');
+      } catch (e) {
+        console.warn('Could not extract all styles:', e);
+      }
+
+      const printWindow = window.open('', '_blank', 'width=1200,height=800');
+      if (!printWindow) {
+        toast.error('Please allow pop-ups to print the lending report');
+        return;
+      }
+
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Lending Report - ${new Date().toISOString().split('T')[0]}</title>
+          <meta charset="utf-8">
+          <style>
+            ${styles}
+            @media print {
+              @page {
+                size: letter;
+                margin: 0.75in;
+              }
+              * {
+                color: #000 !important;
+                background: transparent !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+              body {
+                margin: 0;
+                padding: 0;
+              }
+            }
+            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+            body {
+              font-family: 'Poppins', sans-serif;
+              margin: 0;
+              padding: 20px;
+              background: white;
+              color: #000;
+            }
+            table {
+              border-collapse: collapse;
+              width: 100%;
+            }
+            th, td {
+              border: 1px solid #000;
+              padding: 10px 8px;
+            }
+            th {
+              font-weight: bold;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContentHTML}
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                window.onafterprint = function() {
+                  setTimeout(function() {
+                    window.close();
+                  }, 100);
+                };
+                setTimeout(function() {
+                  if (!window.closed) {
+                    window.close();
+                  }
+                }, 30000);
+              }, 500);
+            };
+          </script>
+        </body>
+        </html>
+      `);
+      
+      printWindow.document.close();
+    }, 100);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -315,13 +490,22 @@ const StaffLending = () => {
             Request help from other branches. Approve incoming requests from branches that need your stylists.
           </p>
         </div>
-        <button
-          onClick={() => setShowRequestModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Request Help From Another Branch
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            <Printer className="w-4 h-4" />
+            Print Lending Report
+          </button>
+          <button
+            onClick={() => setShowRequestModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Request Help From Another Branch
+          </button>
+        </div>
       </div>
 
       {/* Search and Filters */}
@@ -1168,14 +1352,6 @@ const StaffLending = () => {
         </div>
       )}
 
-      {/* Empty State - No requests at all */}
-      {requests.length === 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-          <ArrowRight className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">No Lending Requests</h3>
-          <p className="text-gray-500">No stylist lending requests found.</p>
-        </div>
-      )}
 
       {/* Reject Modal */}
       <ConfirmModal
@@ -1234,6 +1410,167 @@ const StaffLending = () => {
         }}
         onSave={handleApproveComplete}
       />
+
+      {/* Hidden Print Component */}
+      <div ref={printRef} style={{ position: 'fixed', left: '-200%', top: 0, width: '8.5in', zIndex: -1 }}>
+        <style>{`
+          @media print {
+            @page {
+              size: letter;
+              margin: 0.75in;
+            }
+            * {
+              color: #000 !important;
+              background: transparent !important;
+            }
+          }
+        `}</style>
+        <div className="print-content" style={{ 
+          fontFamily: "'Poppins', sans-serif",
+          color: '#000',
+          background: '#fff',
+          padding: '20px'
+        }}>
+          {/* Header */}
+          <div style={{ 
+            textAlign: 'center',
+            marginBottom: '30px',
+            borderBottom: '2px solid #000',
+            paddingBottom: '15px'
+          }}>
+            <h1 style={{ 
+              fontSize: '24px',
+              fontWeight: 'bold',
+              marginBottom: '10px',
+              letterSpacing: '1px'
+            }}>
+              STAFF LENDING REPORT
+            </h1>
+            <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>
+              {branchInfo?.branchName || branchInfo?.name || 'Branch'}
+            </div>
+            <div style={{ 
+              fontSize: '11px',
+              marginTop: '12px',
+              display: 'flex',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ textAlign: 'left' }}>
+                <div>Printed by: {currentUser ? getFullName(currentUser) : 'Manager'}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div>Printed: {new Date().toLocaleString('en-US', { 
+                  year: 'numeric', 
+                  month: 'short', 
+                  day: 'numeric', 
+                  hour: '2-digit', 
+                  minute: '2-digit' 
+                })}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Stylists Lent Out FROM This Branch */}
+          {lentOutStylists.length > 0 && (
+            <div style={{ marginBottom: '30px' }}>
+              <h2 style={{ 
+                fontSize: '18px',
+                fontWeight: 'bold',
+                marginBottom: '15px',
+                borderBottom: '1px solid #000',
+                paddingBottom: '8px'
+              }}>
+                Stylists Lent Out (From This Branch)
+              </h2>
+              <table style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                border: '1px solid #000',
+                fontSize: '11px'
+              }}>
+                <thead>
+                  <tr>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'left', fontWeight: 'bold' }}>Stylist Name</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'left', fontWeight: 'bold' }}>Email</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Lent To Branch</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Start Date</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>End Date</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lentOutStylists.map((lending, idx) => (
+                    <tr key={lending.id || idx} style={{ pageBreakInside: 'avoid' }}>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px' }}>{lending.stylistName || 'Unknown'}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px' }}>{lending.stylistEmail || 'N/A'}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{lending.toBranchName}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{lending.startDate ? formatDate(lending.startDate, 'MMM dd, yyyy') : 'N/A'}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{lending.endDate ? formatDate(lending.endDate, 'MMM dd, yyyy') : 'N/A'}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{lending.status ? lending.status.charAt(0).toUpperCase() + lending.status.slice(1) : 'N/A'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Stylists Lent TO This Branch */}
+          {lentInStylists.length > 0 && (
+            <div style={{ marginBottom: '30px' }}>
+              <h2 style={{ 
+                fontSize: '18px',
+                fontWeight: 'bold',
+                marginBottom: '15px',
+                borderBottom: '1px solid #000',
+                paddingBottom: '8px'
+              }}>
+                Stylists Lent In (To This Branch)
+              </h2>
+              <table style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                border: '1px solid #000',
+                fontSize: '11px'
+              }}>
+                <thead>
+                  <tr>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'left', fontWeight: 'bold' }}>Stylist Name</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'left', fontWeight: 'bold' }}>Email</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Lent From Branch</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Start Date</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>End Date</th>
+                    <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lentInStylists.map((lending, idx) => (
+                    <tr key={lending.id || idx} style={{ pageBreakInside: 'avoid' }}>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px' }}>{lending.stylistName || 'Unknown'}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px' }}>{lending.stylistEmail || 'N/A'}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{lending.fromBranchName}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{lending.startDate ? formatDate(lending.startDate, 'MMM dd, yyyy') : 'N/A'}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{lending.endDate ? formatDate(lending.endDate, 'MMM dd, yyyy') : 'N/A'}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{lending.status ? lending.status.charAt(0).toUpperCase() + lending.status.slice(1) : 'N/A'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Empty State */}
+          {lentOutStylists.length === 0 && lentInStylists.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '40px' }}>
+              <p style={{ fontSize: '14px', color: '#666' }}>No active lending records to display</p>
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className="mt-4 pt-2 border-t border-black text-center" style={{ fontSize: '11px', marginTop: '16px', paddingTop: '8px', borderTop: '1px solid #000' }}>
+            <p>Total Lent Out: {lentOutStylists.length} | Total Lent In: {lentInStylists.length}</p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

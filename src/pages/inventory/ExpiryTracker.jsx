@@ -475,6 +475,9 @@ const ExpiryTracker = () => {
                     Days Left
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Usage Type
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -488,7 +491,7 @@ const ExpiryTracker = () => {
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredBatches.length === 0 ? (
                   <tr>
-                    <td colSpan="9" className="px-6 py-8 text-center text-gray-500">
+                    <td colSpan="10" className="px-6 py-8 text-center text-gray-500">
                       {batches.length === 0 
                         ? 'No batches found. Batches will be created when purchase orders are marked as delivered.'
                         : 'No batches match your filters. Try adjusting your search or filters.'
@@ -539,6 +542,15 @@ const ExpiryTracker = () => {
                           }`}>
                             {daysLeft === null ? 'N/A' : daysLeft < 0 ? 'Expired' : `${daysLeft} days`}
                           </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            (batch.usageType || 'otc') === 'salon-use'
+                              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : 'bg-green-100 text-green-800 border border-green-200'
+                          }`}>
+                            {(batch.usageType || 'otc') === 'salon-use' ? 'Salon Use' : 'OTC'}
+                          </span>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium border ${getStatusColor(status)}`}>

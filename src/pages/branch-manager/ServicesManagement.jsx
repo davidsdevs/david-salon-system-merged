@@ -15,13 +15,15 @@ import {
   getServiceCategories
 } from '../../services/branchServicesService';
 import { getBranchById } from '../../services/branchService';
+import { getAppointments, APPOINTMENT_STATUS } from '../../services/appointmentService';
 import { getCatalogConfig, saveCatalogConfig } from '../../services/catalogService';
 import { uploadToCloudinary } from '../../services/imageService';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import ConfirmModal from '../../components/ui/ConfirmModal';
 import BranchServicePriceModal from '../../components/branch/BranchServicePriceModal';
 import Button from '../../components/ui/Button';
-import { useReactToPrint } from 'react-to-print';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import {
   DndContext,
   closestCenter,
@@ -316,7 +318,14 @@ const ServicesManagement = () => {
 
   const applyFilters = () => {
     // Start with all or offered based on filter mode
-    let filtered = filterMode === 'offered' ? [...offeredServices] : [...allServices];
+    let filtered;
+    if (filterMode === 'offered') {
+      // My Services: only show services offered by this branch
+      filtered = [...offeredServices];
+    } else {
+      // All Available: only show services NOT offered by this branch
+      filtered = allServices.filter(service => !service.isOfferedByBranch);
+    }
 
     // Search filter
     if (searchTerm) {
@@ -355,9 +364,123 @@ const ServicesManagement = () => {
   };
 
 
-  const handleDisableService = (service) => {
-    setServiceToDisable(service);
-    setShowDisableModal(true);
+  const checkServiceInConfirmedAppointments = async (serviceId) => {
+    try {
+      // Get all appointments for this branch
+      const { appointments } = await getAppointments(
+        { branchId: userBranch, status: APPOINTMENT_STATUS.CONFIRMED },
+        'branch_manager',
+        currentUser?.uid,
+        1000 // Get up to 1000 appointments to check
+      );
+
+      // Convert serviceId to string for consistent comparison
+      const serviceIdStr = String(serviceId).trim();
+
+      // Check if any confirmed appointment uses this service
+      const matchingAppointments = [];
+      const hasConfirmedAppointments = appointments.some(appointment => {
+        let matches = false;
+        
+        // Check serviceStylistPairs array
+        if (appointment.serviceStylistPairs && Array.isArray(appointment.serviceStylistPairs)) {
+          const found = appointment.serviceStylistPairs.some(pair => {
+            const pairServiceId = pair?.serviceId ? String(pair.serviceId).trim() : null;
+            return pairServiceId === serviceIdStr;
+          });
+          if (found) {
+            matches = true;
+            matchingAppointments.push({
+              id: appointment.id,
+              format: 'serviceStylistPairs',
+              pairs: appointment.serviceStylistPairs
+            });
+          }
+        }
+        
+        // Check services array (newer format)
+        if (appointment.services && Array.isArray(appointment.services)) {
+          const found = appointment.services.some(svc => {
+            const svcServiceId = svc?.serviceId ? String(svc.serviceId).trim() : null;
+            return svcServiceId === serviceIdStr;
+          });
+          if (found) {
+            matches = true;
+            matchingAppointments.push({
+              id: appointment.id,
+              format: 'services',
+              services: appointment.services
+            });
+          }
+        }
+        
+        // Check serviceId field (older format)
+        if (appointment.serviceId) {
+          const aptServiceId = String(appointment.serviceId).trim();
+          if (aptServiceId === serviceIdStr) {
+            matches = true;
+            matchingAppointments.push({
+              id: appointment.id,
+              format: 'serviceId',
+              serviceId: appointment.serviceId
+            });
+          }
+        }
+        
+        // Check serviceIds array (older format)
+        if (appointment.serviceIds && Array.isArray(appointment.serviceIds)) {
+          const found = appointment.serviceIds.some(id => {
+            const idStr = String(id).trim();
+            return idStr === serviceIdStr;
+          });
+          if (found) {
+            matches = true;
+            matchingAppointments.push({
+              id: appointment.id,
+              format: 'serviceIds',
+              serviceIds: appointment.serviceIds
+            });
+          }
+        }
+        
+        return matches;
+      });
+
+      // Log for debugging
+      if (hasConfirmedAppointments) {
+        console.log(`Service ${serviceId} found in confirmed appointments:`, matchingAppointments);
+      } else {
+        console.log(`Service ${serviceId} NOT found in any confirmed appointments. Total appointments checked: ${appointments.length}`);
+      }
+
+      return hasConfirmedAppointments;
+    } catch (error) {
+      console.error('Error checking appointments:', error);
+      // If there's an error, be safe and prevent deletion
+      return true;
+    }
+  };
+
+  const handleDisableService = async (service) => {
+    try {
+      // Check if service is used in confirmed appointments
+      const hasConfirmedAppointments = await checkServiceInConfirmedAppointments(service.id);
+      
+      if (hasConfirmedAppointments) {
+        toast.error(
+          `Cannot remove "${service.name}". This service is used in confirmed appointments. Please cancel or complete those appointments first.`,
+          { duration: 5000 }
+        );
+        return;
+      }
+
+      // If no confirmed appointments, proceed with removal
+      setServiceToDisable(service);
+      setShowDisableModal(true);
+    } catch (error) {
+      console.error('Error checking appointments:', error);
+      toast.error('Failed to check appointments. Please try again.');
+    }
   };
 
   const confirmDisable = async () => {
@@ -365,11 +488,27 @@ const ServicesManagement = () => {
     
     try {
       setSaving(true);
+      
+      // Double-check before removing (in case appointments were confirmed between modal open and confirm)
+      const hasConfirmedAppointments = await checkServiceInConfirmedAppointments(serviceToDisable.id);
+      
+      if (hasConfirmedAppointments) {
+        toast.error(
+          `Cannot remove "${serviceToDisable.name}". This service is used in confirmed appointments. Please cancel or complete those appointments first.`,
+          { duration: 5000 }
+        );
+        setShowDisableModal(false);
+        setServiceToDisable(null);
+        return;
+      }
+
       await disableBranchService(serviceToDisable.id, userBranch, currentUser);
       await fetchServices();
       setShowDisableModal(false);
+      toast.success(`"${serviceToDisable.name}" has been removed from your branch services.`);
     } catch (error) {
       console.error('Error disabling service:', error);
+      toast.error('Failed to remove service. Please try again.');
     } finally {
       setSaving(false);
       setServiceToDisable(null);
@@ -566,42 +705,369 @@ const ServicesManagement = () => {
     }
   };
 
-  const handlePrint = useReactToPrint({
-    content: () => {
-      // Always use regular preview (not mockup) for printing
-      // If mockup is showing, we still print the regular preview (hidden but rendered)
-      return printRef.current;
-    },
-    documentTitle: `${branch?.name || branch?.branchName || 'David Salon'} - Service Catalog`,
-    pageStyle: `
-      @page {
-        size: A4;
-        margin: 1cm;
-      }
-      @media print {
-        body * {
-          visibility: hidden;
-        }
-        .print-content, .print-content * {
-          visibility: visible;
-        }
-        .print-content {
-          position: absolute;
-          left: 0;
-          top: 0;
-          width: 100%;
-          background: white !important;
-        }
-        .print-content * {
-          background: white !important;
-        }
-      }
-    `
-  });
+  const handlePrint = () => {
+    if (!printRef.current) {
+      toast.error('Print content not ready. Please try again.');
+      return;
+    }
 
-  const handleDownloadPDF = () => {
-    // Use the same print handler - browser will allow "Save as PDF"
-    handlePrint();
+    // Wait a moment to ensure content is fully rendered
+    setTimeout(() => {
+      if (!printRef.current) {
+        toast.error('Print content not ready. Please try again.');
+        return;
+      }
+
+      // Get the inner HTML of the print content
+      const printContentHTML = printRef.current.innerHTML;
+      
+      // Get all computed styles from the document
+      let styles = '';
+      try {
+        styles = Array.from(document.styleSheets)
+          .map((sheet) => {
+            try {
+              return Array.from(sheet.cssRules || [])
+                .map((rule) => rule.cssText)
+                .join('\n');
+            } catch (e) {
+              // Cross-origin stylesheets will throw an error, skip them
+              // Try to get href if available
+              if (sheet.href) {
+                return `@import url('${sheet.href}');`;
+              }
+              return '';
+            }
+          })
+          .join('\n');
+      } catch (e) {
+        console.warn('Could not extract all styles:', e);
+      }
+
+      // Create print window
+      const printWindow = window.open('', '_blank', 'width=1200,height=800');
+      if (!printWindow) {
+        toast.error('Please allow pop-ups to print the catalog');
+        return;
+      }
+
+      const catalogTitle = `${branch?.name || branch?.branchName || 'David Salon'} - Service Catalog`;
+
+      // Write HTML content
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>${catalogTitle}</title>
+          <meta charset="utf-8">
+          <link rel="preconnect" href="https://fonts.googleapis.com">
+          <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+          <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+          <style>
+            ${styles}
+            /* Fallback styles to ensure content is visible */
+            * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+            }
+            body {
+              font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              margin: 0;
+              padding: 20px;
+              background: white !important;
+              color: #000 !important;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+              visibility: visible !important;
+            }
+            body * {
+              visibility: visible !important;
+            }
+            /* Ensure all elements are visible */
+            div, p, h1, h2, h3, h4, h5, h6, span, img, table, tr, td, th {
+              display: block;
+              visibility: visible !important;
+            }
+            /* Basic layout styles */
+            .flex {
+              display: flex;
+            }
+            .grid {
+              display: grid;
+            }
+            .text-center {
+              text-align: center;
+            }
+            .mb-12 {
+              margin-bottom: 3rem;
+            }
+            .mb-4 {
+              margin-bottom: 1rem;
+            }
+            .mb-3 {
+              margin-bottom: 0.75rem;
+            }
+            .mt-1 {
+              margin-top: 0.25rem;
+            }
+            .mt-4 {
+              margin-top: 1rem;
+            }
+            .p-12 {
+              padding: 3rem;
+            }
+            .pb-8 {
+              padding-bottom: 2rem;
+            }
+            .pt-8 {
+              padding-top: 2rem;
+            }
+            .border-b-2 {
+              border-bottom-width: 2px;
+            }
+            .border-t-2 {
+              border-top-width: 2px;
+            }
+            .border-gray-300 {
+              border-color: #d1d5db;
+            }
+            .font-bold {
+              font-weight: 700;
+            }
+            .font-semibold {
+              font-weight: 600;
+            }
+            .text-gray-900 {
+              color: #111827;
+            }
+            .text-gray-600 {
+              color: #4b5563;
+            }
+            .text-gray-500 {
+              color: #6b7280;
+            }
+            .text-sm {
+              font-size: 0.875rem;
+            }
+            .italic {
+              font-style: italic;
+            }
+            .uppercase {
+              text-transform: uppercase;
+            }
+            .tracking-wide {
+              letter-spacing: 0.025em;
+            }
+            img {
+              max-width: 100%;
+              height: auto;
+              display: inline-block;
+            }
+            @media print {
+              @page {
+                size: A4;
+                margin: 1cm;
+              }
+              * {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              body {
+                margin: 0;
+                padding: 0;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          ${printContentHTML}
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                // Close window after print dialog is closed
+                window.onafterprint = function() {
+                  setTimeout(function() {
+                    window.close();
+                  }, 100);
+                };
+                // Fallback: close after 30 seconds if print dialog doesn't trigger onafterprint
+                setTimeout(function() {
+                  if (!window.closed) {
+                    window.close();
+                  }
+                }, 30000);
+              }, 1000);
+            };
+          </script>
+        </body>
+        </html>
+      `);
+      
+      printWindow.document.close();
+    }, 500);
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!printRef.current) {
+      toast.error('PDF content not ready. Please try again.');
+      return;
+    }
+
+    try {
+      toast.loading('Generating PDF...', { id: 'pdf-generating' });
+      
+      // Wait for images to load
+      const images = printRef.current.querySelectorAll('img');
+      if (images.length > 0) {
+        await Promise.all(
+          Array.from(images).map((img) => {
+            if (img.complete && img.naturalHeight !== 0) {
+              return Promise.resolve();
+            }
+            return new Promise((resolve) => {
+              if (img.src && !img.crossOrigin) {
+                img.crossOrigin = 'anonymous';
+              }
+              const onLoad = () => {
+                img.removeEventListener('load', onLoad);
+                img.removeEventListener('error', onError);
+                resolve();
+              };
+              const onError = () => {
+                img.removeEventListener('load', onLoad);
+                img.removeEventListener('error', onError);
+                resolve(); // Continue even if image fails
+              };
+              img.addEventListener('load', onLoad);
+              img.addEventListener('error', onError);
+              setTimeout(() => {
+                img.removeEventListener('load', onLoad);
+                img.removeEventListener('error', onError);
+                resolve();
+              }, 3000);
+            });
+          })
+        );
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      // Get the actual dimensions of the content
+      const element = printRef.current;
+      
+      // Ensure element is visible and not clipped
+      const originalStyle = {
+        position: element.style.position,
+        left: element.style.left,
+        top: element.style.top,
+        visibility: element.style.visibility,
+        overflow: element.style.overflow,
+      };
+      
+      // Temporarily make element fully visible for capture
+      element.style.position = 'absolute';
+      element.style.left = '0px';
+      element.style.top = '0px';
+      element.style.visibility = 'visible';
+      element.style.overflow = 'visible';
+      
+      // Wait a bit for styles to apply
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      const scrollWidth = element.scrollWidth || element.offsetWidth;
+      const scrollHeight = element.scrollHeight || element.offsetHeight;
+
+      // Capture the content as canvas with full height
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        logging: false,
+        backgroundColor: '#ffffff',
+        width: scrollWidth,
+        height: scrollHeight,
+        windowWidth: scrollWidth,
+        windowHeight: scrollHeight,
+        scrollX: 0,
+        scrollY: 0,
+        x: 0,
+        y: 0,
+      });
+      
+      // Restore original styles
+      element.style.position = originalStyle.position;
+      element.style.left = originalStyle.left;
+      element.style.top = originalStyle.top;
+      element.style.visibility = originalStyle.visibility;
+      element.style.overflow = originalStyle.overflow;
+
+      // Calculate PDF dimensions (A4: 210mm x 297mm)
+      const pageWidth = 210; // A4 width in mm
+      const pageHeight = 297; // A4 height in mm
+      const margin = 10; // 1cm margin
+      const contentWidth = pageWidth - (margin * 2); // 190mm
+      const contentHeight = pageHeight - (margin * 2); // 277mm
+      
+      // Calculate image dimensions
+      const imgWidth = contentWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      
+      // Convert content height to pixels for canvas slicing
+      const pixelsPerMM = canvas.width / imgWidth;
+      const contentHeightPx = contentHeight * pixelsPerMM;
+
+      // Create PDF in A4 size
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      let sourceY = 0;
+      let pageNumber = 0;
+
+      // Slice content across pages with overlap to avoid cutting content
+      while (sourceY < canvas.height) {
+        if (pageNumber > 0) {
+          pdf.addPage();
+        }
+
+        const remainingHeight = canvas.height - sourceY;
+        const sliceHeight = Math.min(contentHeightPx, remainingHeight);
+        const sliceHeightMM = (sliceHeight / pixelsPerMM);
+
+        // Create a temporary canvas for this page slice
+        const pageCanvas = document.createElement('canvas');
+        pageCanvas.width = canvas.width;
+        pageCanvas.height = sliceHeight;
+        const pageCtx = pageCanvas.getContext('2d');
+        
+        // Draw the slice from the original canvas
+        pageCtx.drawImage(
+          canvas,
+          0, sourceY, canvas.width, sliceHeight,
+          0, 0, canvas.width, sliceHeight
+        );
+
+        // Add the slice to PDF
+        pdf.addImage(
+          pageCanvas.toDataURL('image/png', 1.0),
+          'PNG',
+          margin,
+          margin,
+          imgWidth,
+          sliceHeightMM
+        );
+
+        sourceY += sliceHeight;
+        pageNumber++;
+      }
+
+      // Download PDF
+      const fileName = `${branch?.name || branch?.branchName || 'David_Salon'}_Service_Catalog_${new Date().toISOString().split('T')[0]}.pdf`;
+      pdf.save(fileName);
+      
+      toast.success('PDF downloaded successfully', { id: 'pdf-generating' });
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      toast.error('Failed to generate PDF. Please try again.', { id: 'pdf-generating' });
+    }
   };
 
   const handleAddRow = () => {
@@ -814,7 +1280,7 @@ const ServicesManagement = () => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            All Available ({allServices.length})
+            All Available ({allServices.filter(s => !s.isOfferedByBranch).length})
           </button>
           <button
             onClick={() => setFilterMode('offered')}
@@ -900,7 +1366,9 @@ const ServicesManagement = () => {
                   <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
               {filterMode === 'offered' 
                       ? 'You haven\'t offered any services yet. Switch to "All Available" to add services.' 
-                : 'No services found'}
+                : filterMode === 'all'
+                  ? 'All available services have been added to your branch.'
+                  : 'No services found'}
                   </td>
                 </tr>
         ) : (
@@ -966,33 +1434,37 @@ const ServicesManagement = () => {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                {service.isOfferedByBranch ? (
+                {filterMode === 'offered' ? (
+                  // My Services: All services here are offered, so show Edit Price and Remove
                   <>
                     <button
                       onClick={() => handleSetPrice(service)}
                       disabled={saving}
-                              className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors disabled:opacity-50"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 text-sm text-primary-600 hover:bg-primary-50 rounded-lg transition-colors disabled:opacity-50"
                               title="Update Price"
                     >
                       <Edit className="w-4 h-4" />
+                      Update Price
                     </button>
                     <button
                       onClick={() => handleDisableService(service)}
                       disabled={saving}
-                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                              title="Remove Service"
+                              className="inline-flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                              title="Remove from Branch"
                     >
                       <Trash2 className="w-4 h-4" />
+                      Remove
                     </button>
                   </>
                 ) : (
+                  // All Available: Only services not offered, so show Add to Branch
                   <button
                     onClick={() => handleSetPrice(service)}
                     disabled={saving}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
                   >
                     <Plus className="w-4 h-4" />
-                    Set Price
+                    Add to Branch
                   </button>
                 )}
               </div>
@@ -1036,9 +1508,9 @@ const ServicesManagement = () => {
           }
         }}
         onConfirm={confirmDisable}
-        title="Disable Service"
-        message={`Are you sure you want to stop offering "${serviceToDisable?.name}"?`}
-        confirmText="Disable"
+        title="Remove Service"
+        message={`Do you want to remove "${serviceToDisable?.name}" from your branch? This will stop offering this service at your branch.`}
+        confirmText="Remove"
         cancelText="Cancel"
         type="danger"
         loading={saving}

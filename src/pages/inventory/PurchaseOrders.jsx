@@ -15,7 +15,7 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  DollarSign,
+  Banknote,
   Package,
   Building,
   FileText,
@@ -391,43 +391,36 @@ const PurchaseOrders = () => {
       toast.error(`${product.name} is out of stock - Order immediately!`, { duration: 4000 });
     }
     
-    const existingItem = orderItems.find(item => item.productId === product.id);
-    if (existingItem) {
-      // Update quantity if already in order
-      setOrderItems(prev => prev.map(item =>
-        item.productId === product.id
-          ? { ...item, quantity: item.quantity + 1, totalPrice: (item.quantity + 1) * item.unitPrice }
-          : item
-      ));
-    } else {
-      // Add new item - ensure all fields have values (no undefined)
-      setOrderItems(prev => [...prev, {
-        productId: product.id || '',
-        productName: product.name || '',
-        quantity: 1,
-        unitPrice: product.unitCost || 0,
-        totalPrice: product.unitCost || 0,
-        category: product.category || null,
-        sku: product.sku || null,
-        currentStock: currentStock // Store current stock for display
-      }]);
-    }
+    // Always add as new item - user can have same product with different usage types
+    // Add new item - ensure all fields have values (no undefined)
+    setOrderItems(prev => [...prev, {
+      productId: product.id || '',
+      productName: product.name || '',
+      quantity: 1,
+      unitPrice: product.unitCost || 0,
+      totalPrice: product.unitCost || 0,
+      category: product.category || null,
+      sku: product.sku || null,
+      currentStock: currentStock, // Store current stock for display
+      usageType: 'otc', // Default to OTC, can be changed to 'salon-use'
+      itemKey: `${product.id}_${Date.now()}_${Math.random()}` // Unique key for each item entry
+    }]);
   };
 
-  // Remove item from order
-  const removeOrderItem = (productId) => {
-    setOrderItems(prev => prev.filter(item => item.productId !== productId));
+  // Remove item from order (by unique itemKey)
+  const removeOrderItem = (itemKey) => {
+    setOrderItems(prev => prev.filter(item => item.itemKey !== itemKey));
   };
 
-  // Update item quantity
-  const updateItemQuantity = (productId, quantity) => {
+  // Update item quantity (by unique itemKey)
+  const updateItemQuantity = (itemKey, quantity) => {
     const qty = parseInt(quantity) || 0;
     if (qty < 1) {
-      removeOrderItem(productId);
+      removeOrderItem(itemKey);
       return;
     }
     setOrderItems(prev => prev.map(item =>
-      item.productId === productId
+      item.itemKey === itemKey
         ? { 
             ...item, 
             quantity: qty, 
@@ -437,8 +430,18 @@ const PurchaseOrders = () => {
             productName: item.productName || '',
             unitPrice: item.unitPrice || 0,
             category: item.category || null,
-            sku: item.sku || null
+            sku: item.sku || null,
+            usageType: item.usageType || 'otc'
           }
+        : item
+    ));
+  };
+
+  // Update item usage type (by unique itemKey)
+  const updateItemUsageType = (itemKey, usageType) => {
+    setOrderItems(prev => prev.map(item =>
+      item.itemKey === itemKey
+        ? { ...item, usageType: usageType }
         : item
     ));
   };
@@ -583,7 +586,8 @@ const PurchaseOrders = () => {
             productName: String(item.productName || ''),
             quantity: Number(item.quantity) || 0,
             unitPrice: Number(item.unitPrice) || 0,
-            totalPrice: Number(item.totalPrice) || 0
+            totalPrice: Number(item.totalPrice) || 0,
+            usageType: String(item.usageType || 'otc') // Include usage type: 'otc' or 'salon-use'
           };
           
           // Optional fields - only include if they have values
@@ -1032,7 +1036,7 @@ const PurchaseOrders = () => {
           
           <Card className="p-4">
             <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-purple-600" />
+              <Banknote className="h-8 w-8 text-purple-600" />
               <div className="ml-3">
                 <p className="text-sm font-medium text-gray-600">Total Value</p>
                 <p className="text-xl font-bold text-gray-900">₱{orderStats.totalValue.toLocaleString()}</p>
@@ -1566,6 +1570,16 @@ const PurchaseOrders = () => {
                                         {item.currentStock > 5 && ' (High stock - ordering not recommended)'}
                                       </p>
                                     )}
+                                    {/* Show usage type badge */}
+                                    <div className="mt-1">
+                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                                        (item.usageType || 'otc') === 'salon-use'
+                                          ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                          : 'bg-green-100 text-green-800 border border-green-200'
+                                      }`}>
+                                        {(item.usageType || 'otc') === 'salon-use' ? 'Salon Use' : 'OTC'}
+                                      </span>
+                                    </div>
                                   </div>
                                   
                                   <div className="flex items-center gap-4">
@@ -1575,9 +1589,20 @@ const PurchaseOrders = () => {
                                         type="number"
                                         min="1"
                                         value={item.quantity}
-                                        onChange={(e) => updateItemQuantity(item.productId, e.target.value)}
+                                        onChange={(e) => updateItemQuantity(item.itemKey || item.productId, e.target.value)}
                                         className="w-20"
                                       />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <label className="text-sm text-gray-600 whitespace-nowrap">Usage:</label>
+                                      <select
+                                        value={item.usageType || 'otc'}
+                                        onChange={(e) => updateItemUsageType(item.itemKey || item.productId, e.target.value)}
+                                        className="w-32 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53]"
+                                      >
+                                        <option value="otc">OTC</option>
+                                        <option value="salon-use">Salon Use</option>
+                                      </select>
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <label className="text-sm text-gray-600 whitespace-nowrap">Unit Price:</label>
@@ -1594,7 +1619,7 @@ const PurchaseOrders = () => {
                                       type="button"
                                       variant="ghost"
                                       size="sm"
-                                      onClick={() => removeOrderItem(item.productId)}
+                                      onClick={() => removeOrderItem(item.itemKey || item.productId)}
                                       className="text-red-600 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
                                     >
                                       <Trash2 className="h-4 w-4" />

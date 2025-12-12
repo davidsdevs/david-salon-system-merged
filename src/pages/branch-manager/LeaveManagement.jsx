@@ -3,8 +3,8 @@
  * Manage leave requests for stylists and request own leave
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { Calendar, Plus, CheckCircle, XCircle, Clock, User, Search, Filter, UserPlus } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Calendar, Plus, CheckCircle, XCircle, Clock, User, Search, Filter, UserPlus, Printer, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   getLeaveRequestsByBranch, 
@@ -15,6 +15,7 @@ import {
   LEAVE_TYPES 
 } from '../../services/leaveManagementService';
 import { getUsersByBranch, getUserById } from '../../services/userService';
+import { getBranchById } from '../../services/branchService';
 import { formatDate, getFullName } from '../../utils/helpers';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import ConfirmModal from '../../components/ui/ConfirmModal';
@@ -32,6 +33,10 @@ const LeaveManagement = () => {
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [isForStaff, setIsForStaff] = useState(false);
   const [processing, setProcessing] = useState(null);
+  const [branchInfo, setBranchInfo] = useState(null);
+  
+  // Print ref
+  const printRef = useRef();
   
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -42,8 +47,18 @@ const LeaveManagement = () => {
     if (userBranch) {
       fetchLeaveRequests();
       fetchStaffMembers();
+      fetchBranchInfo();
     }
   }, [userBranch]);
+
+  const fetchBranchInfo = async () => {
+    try {
+      const branch = await getBranchById(userBranch);
+      setBranchInfo(branch);
+    } catch (error) {
+      console.error('Error fetching branch info:', error);
+    }
+  };
 
   const fetchLeaveRequests = async () => {
     try {
@@ -91,13 +106,16 @@ const LeaveManagement = () => {
         return false;
       }
 
-      // Branch manager can only see:
-      // 1. Stylist requests (approved by them)
-      // 2. Their own requests (if pending operational manager approval)
+      // Branch manager can see:
+      // 1. Stylist requests (requests that don't require operational approval - they approve these)
+      // 2. Their own requests (regardless of status or requiresOperationalApproval) - including cancelled/pending/approved
+      // 3. All requests in their branch (to see all leave activity for their branch)
       const isStylistRequest = !request.requiresOperationalApproval;
-      const isOwnRequest = request.employeeId === currentUser.uid && request.requiresOperationalApproval;
+      const isOwnRequest = request.employeeId === currentUser.uid;
+      const isInSameBranch = request.branchId === userBranch;
       
-      return isStylistRequest || isOwnRequest;
+      // Show if: stylist request (for approval), own request (to see status), or in same branch (visibility)
+      return isStylistRequest || isOwnRequest || isInSameBranch;
     });
   }, [leaveRequests, searchTerm, statusFilter, typeFilter, currentUser.uid]);
 
@@ -193,9 +211,118 @@ const LeaveManagement = () => {
     return badges[status] || badges.pending;
   };
 
+  // Print handler
+  const handlePrint = () => {
+    if (!printRef.current) {
+      toast.error('Print content not ready. Please try again.');
+      return;
+    }
+
+    setTimeout(() => {
+      if (!printRef.current) {
+        toast.error('Print content not ready. Please try again.');
+        return;
+      }
+
+      const printContentHTML = printRef.current.innerHTML;
+      
+      let styles = '';
+      try {
+        styles = Array.from(document.styleSheets)
+          .map((sheet) => {
+            try {
+              return Array.from(sheet.cssRules || [])
+                .map((rule) => rule.cssText)
+                .join('\n');
+            } catch (e) {
+              return '';
+            }
+          })
+          .join('\n');
+      } catch (e) {
+        console.warn('Could not extract all styles:', e);
+      }
+
+      const printWindow = window.open('', '_blank', 'width=1200,height=800');
+      if (!printWindow) {
+        toast.error('Please allow pop-ups to print the leave report');
+        return;
+      }
+
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Leave Report - ${new Date().toISOString().split('T')[0]}</title>
+          <meta charset="utf-8">
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+            ${styles}
+            @media print {
+              @page {
+                size: A4;
+                margin: 0.75in;
+              }
+              * {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+              body {
+                margin: 0;
+                padding: 0;
+              }
+            }
+            body {
+              font-family: 'Poppins', sans-serif;
+              margin: 0;
+              padding: 20px;
+              background: white;
+              color: #000;
+            }
+            table {
+              border-collapse: collapse;
+              width: 100%;
+            }
+            th, td {
+              border: 1px solid #000;
+              padding: 10px 8px;
+            }
+            th {
+              font-weight: bold;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContentHTML}
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                window.onafterprint = function() {
+                  setTimeout(function() {
+                    window.close();
+                  }, 100);
+                };
+                setTimeout(function() {
+                  if (!window.closed) {
+                    window.close();
+                  }
+                }, 30000);
+              }, 500);
+            };
+          </script>
+        </body>
+        </html>
+      `);
+      
+      printWindow.document.close();
+    }, 100);
+  };
+
   const pendingRequests = filteredRequests.filter(r => r.status === 'pending');
   const approvedRequests = filteredRequests.filter(r => r.status === 'approved');
   const rejectedRequests = filteredRequests.filter(r => r.status === 'rejected');
+  const cancelledRequests = filteredRequests.filter(r => r.status === 'cancelled');
 
   if (loading) {
     return (
@@ -215,6 +342,13 @@ const LeaveManagement = () => {
         </div>
         <div className="flex gap-2">
           <button
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            <Printer className="w-5 h-5" />
+            Print Report
+          </button>
+          <button
             onClick={() => handleRequestLeave(true)}
             className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
           >
@@ -232,7 +366,7 @@ const LeaveManagement = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="text-sm text-gray-600">Pending</div>
@@ -262,9 +396,18 @@ const LeaveManagement = () => {
         </div>
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-gray-600">Total</div>
+            <div className="text-sm text-gray-600">Cancelled</div>
             <div className="bg-gray-100 p-2 rounded-lg">
-              <Calendar className="w-5 h-5 text-gray-600" />
+              <X className="w-5 h-5 text-gray-600" />
+            </div>
+          </div>
+          <div className="text-2xl font-bold text-gray-600">{cancelledRequests.length}</div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm text-gray-600">Total</div>
+            <div className="bg-blue-100 p-2 rounded-lg">
+              <Calendar className="w-5 h-5 text-blue-600" />
             </div>
           </div>
           <div className="text-2xl font-bold text-gray-900">{filteredRequests.length}</div>
@@ -326,7 +469,17 @@ const LeaveManagement = () => {
               const employeeName = getEmployeeName(request.employeeId);
               const isOwnRequest = request.employeeId === currentUser.uid;
               const isPending = request.status === 'pending';
+              
+              // Branch manager can approve/reject pending requests from employees/stylists:
+              // - Request must be pending
+              // - Must not be the branch manager's own request (those require operational manager approval)
+              // - Must not require operational approval (indicates it's from an employee/stylist, not another manager)
+              // If requiresOperationalApproval is false, it means it's an employee/stylist request
               const canApprove = isPending && !isOwnRequest && !request.requiresOperationalApproval;
+              
+              // Branch manager can cancel:
+              // - Their own pending requests
+              // - Requests they submitted for others
               const canCancel = isPending && (isOwnRequest || request.submittedBy === currentUser.uid);
 
               return (
@@ -439,6 +592,181 @@ const LeaveManagement = () => {
         }}
         onConfirm={handleRejectConfirm}
       />
+
+      {/* Hidden Print Component */}
+      <div ref={printRef} style={{ position: 'fixed', left: '-200%', top: 0, width: '8.5in', zIndex: -1 }}>
+        <style>{`
+          @media print {
+            @page {
+              size: A4;
+              margin: 0.75in;
+            }
+            * {
+              color: #000 !important;
+              background: transparent !important;
+            }
+          }
+        `}</style>
+        <div className="print-content" style={{ 
+          fontFamily: "'Poppins', sans-serif",
+          color: '#000',
+          background: '#fff',
+          padding: '20px'
+        }}>
+          {/* Header */}
+          <div style={{ 
+            textAlign: 'center',
+            marginBottom: '30px',
+            borderBottom: '2px solid #000',
+            paddingBottom: '15px'
+          }}>
+            <h1 style={{ 
+              fontSize: '24px',
+              fontWeight: 'bold',
+              marginBottom: '10px',
+              letterSpacing: '1px'
+            }}>
+              LEAVE MANAGEMENT REPORT
+            </h1>
+            <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>
+              {branchInfo?.branchName || branchInfo?.name || 'Branch'}
+            </div>
+            <div style={{ 
+              fontSize: '11px',
+              marginTop: '12px',
+              display: 'flex',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ textAlign: 'left' }}>
+                <div>Printed by: {currentUser ? getFullName(currentUser) : 'Manager'}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div>Printed: {new Date().toLocaleString('en-US', { 
+                  year: 'numeric', 
+                  month: 'short', 
+                  day: 'numeric', 
+                  hour: '2-digit', 
+                  minute: '2-digit' 
+                })}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Summary Stats */}
+          <div style={{ 
+            marginBottom: '20px',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: '10px'
+          }}>
+            <div style={{ border: '1px solid #000', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '5px' }}>{pendingRequests.length}</div>
+              <div style={{ fontSize: '11px' }}>Pending</div>
+            </div>
+            <div style={{ border: '1px solid #000', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '5px' }}>{approvedRequests.length}</div>
+              <div style={{ fontSize: '11px' }}>Approved</div>
+            </div>
+            <div style={{ border: '1px solid #000', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '5px' }}>{rejectedRequests.length}</div>
+              <div style={{ fontSize: '11px' }}>Rejected</div>
+            </div>
+            <div style={{ border: '1px solid #000', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '5px' }}>{cancelledRequests.length}</div>
+              <div style={{ fontSize: '11px' }}>Cancelled</div>
+            </div>
+            <div style={{ border: '1px solid #000', padding: '10px', textAlign: 'center' }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '5px' }}>{filteredRequests.length}</div>
+              <div style={{ fontSize: '11px' }}>Total</div>
+            </div>
+          </div>
+
+          {/* Leave Requests Table */}
+          <table style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            border: '1px solid #000',
+            fontSize: '11px'
+          }}>
+            <thead>
+              <tr>
+                <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'left', fontWeight: 'bold' }}>Employee</th>
+                <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Type</th>
+                <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Start Date</th>
+                <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>End Date</th>
+                <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Days</th>
+                <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center', fontWeight: 'bold' }}>Status</th>
+                <th style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'left', fontWeight: 'bold' }}>Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRequests.length === 0 ? (
+                <tr>
+                  <td colSpan="7" style={{ border: '1px solid #000', padding: '20px', textAlign: 'center' }}>
+                    No leave requests found
+                  </td>
+                </tr>
+              ) : (
+                filteredRequests.map((request, idx) => {
+                  const typeInfo = getLeaveTypeInfo(request.type);
+                  const employeeName = getEmployeeName(request.employeeId);
+                  const isOwnRequest = request.employeeId === currentUser.uid;
+                  
+                  // Status colors
+                  let statusBg = '#fef3c7';
+                  let statusText = '#854d0e';
+                  if (request.status === 'approved') {
+                    statusBg = '#d1fae5';
+                    statusText = '#065f46';
+                  } else if (request.status === 'rejected') {
+                    statusBg = '#fee2e2';
+                    statusText = '#991b1b';
+                  } else if (request.status === 'cancelled') {
+                    statusBg = '#f3f4f6';
+                    statusText = '#374151';
+                  }
+
+                  return (
+                    <tr key={request.id} style={{ pageBreakInside: 'avoid' }}>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px' }}>
+                        {employeeName}
+                        {isOwnRequest && <span style={{ fontSize: '9px', color: '#666', display: 'block' }}>(My Request)</span>}
+                      </td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{typeInfo.label}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{formatDate(request.startDate, 'MMM dd, yyyy')}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{formatDate(request.endDate, 'MMM dd, yyyy')}</td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', textAlign: 'center' }}>{request.days || 'N/A'}</td>
+                      <td style={{ 
+                        border: '1px solid #000', 
+                        padding: '10px 8px', 
+                        textAlign: 'center',
+                        backgroundColor: statusBg,
+                        color: statusText,
+                        fontWeight: '600'
+                      }}>
+                        {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                      </td>
+                      <td style={{ border: '1px solid #000', padding: '10px 8px', fontSize: '10px' }}>
+                        {request.reason || 'N/A'}
+                        {request.status === 'rejected' && request.rejectionReason && (
+                          <div style={{ marginTop: '5px', color: '#991b1b', fontSize: '9px' }}>
+                            Rejection: {request.rejectionReason}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+
+          {/* Footer */}
+          <div className="mt-4 pt-2 border-t border-black text-center" style={{ fontSize: '11px', marginTop: '16px', paddingTop: '8px', borderTop: '1px solid #000' }}>
+            <p>Total: {filteredRequests.length} | Pending: {pendingRequests.length} | Approved: {approvedRequests.length} | Rejected: {rejectedRequests.length} | Cancelled: {cancelledRequests.length}</p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

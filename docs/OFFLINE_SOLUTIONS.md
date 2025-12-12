@@ -475,3 +475,15 @@ self.addEventListener('fetch', (event) => {
 **Next Steps:** Enable Firebase offline persistence first, then build PWA features
 
 
+
+
+
+
+
+
+
+
+
+
+
+

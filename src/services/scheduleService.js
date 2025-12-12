@@ -295,24 +295,54 @@ export const getScheduleConfigurationsByBranch = async (branchId) => {
       
       // Check if this is a branch-wide configuration (has shifts object, no employeeId)
       if (data.shifts && typeof data.shifts === 'object' && !data.employeeId) {
-        configurations.push({
+        // Try to find startDate from document level, or extract from shifts
+        let startDate = null;
+        if (data.startDate) {
+          startDate = data.startDate?.toDate ? data.startDate.toDate() : (data.startDate instanceof Date ? data.startDate : new Date(data.startDate));
+        } else {
+          // Try to find startDate from within shifts (some structures store it per day)
+          const allStartDates = [];
+          Object.values(data.shifts).forEach(employeeShifts => {
+            if (employeeShifts && typeof employeeShifts === 'object') {
+              Object.values(employeeShifts).forEach(dayShift => {
+                if (dayShift && dayShift.startDate) {
+                  const sd = dayShift.startDate?.toDate ? dayShift.startDate.toDate() : 
+                            (dayShift.startDate instanceof Date ? dayShift.startDate : new Date(dayShift.startDate));
+                  allStartDates.push(sd);
+                }
+              });
+            }
+          });
+          // Use the earliest startDate found, or fall back to createdAt
+          if (allStartDates.length > 0) {
+            startDate = new Date(Math.min(...allStartDates.map(d => d.getTime())));
+          } else {
+            startDate = data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt instanceof Date ? data.createdAt : new Date(data.createdAt));
+          }
+        }
+        
+        const config = {
           id: doc.id,
           ...data,
-          startDate: data.startDate?.toDate() || data.createdAt?.toDate(),
+          startDate: startDate,
           // Note: endDate is not used - schedules are determined by startDate only
           isActive: data.isActive !== false,
-          createdAt: data.createdAt?.toDate(),
-          updatedAt: data.updatedAt?.toDate()
-        });
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt instanceof Date ? data.createdAt : new Date(data.createdAt)),
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : (data.updatedAt instanceof Date ? data.updatedAt : new Date(data.updatedAt))
+        };
+        
+        configurations.push(config);
       }
     });
     
     // Sort by startDate descending (newest first)
-    return configurations.sort((a, b) => {
+    const sorted = configurations.sort((a, b) => {
       const aTime = a.startDate?.getTime() || 0;
       const bTime = b.startDate?.getTime() || 0;
       return bTime - aTime;
     });
+    
+    return sorted;
   } catch (error) {
     console.error('Error fetching schedule configurations:', error);
     throw error;
@@ -338,7 +368,9 @@ const getScheduleForDate = (configs, targetDate) => {
   // Note: We include both active and inactive configs - the isActive flag doesn't matter for date-based lookup
   const applicableConfigs = configs
     .filter(c => {
-      if (!c.startDate) return false;
+      if (!c.startDate) {
+        return false;
+      }
       const configStartDate = new Date(c.startDate);
       configStartDate.setHours(0, 0, 0, 0);
       const configStartTime = configStartDate.getTime();
@@ -392,17 +424,8 @@ export const getActiveSchedulesByEmployee = async (employeeId, branchId, weekSta
       if (activeConfig.shifts[employeeId]) {
         employeeShifts = activeConfig.shifts[employeeId];
       } else {
-        // Debug: Log available employee IDs if current employee not found
-        const availableIds = Object.keys(activeConfig.shifts);
-        console.log(`Employee ${employeeId} not found in active config. Available IDs:`, availableIds);
-        console.log('Active config shifts structure:', Object.keys(activeConfig.shifts).map(id => ({
-          id,
-          days: Object.keys(activeConfig.shifts[id] || {}),
-          sampleShift: activeConfig.shifts[id] ? Object.values(activeConfig.shifts[id])[0] : null
-        })));
-        console.log('Full active config:', JSON.stringify(activeConfig, null, 2));
-        
         // Try to find a partial match (in case IDs are stored differently)
+        const availableIds = Object.keys(activeConfig.shifts);
         const matchingId = availableIds.find(id => 
           id === employeeId || 
           id.includes(employeeId) || 
@@ -410,7 +433,6 @@ export const getActiveSchedulesByEmployee = async (employeeId, branchId, weekSta
         );
         
         if (matchingId) {
-          console.log(`Found partial match: using ${matchingId} for employee ${employeeId}`);
           employeeShifts = activeConfig.shifts[matchingId];
         }
       }

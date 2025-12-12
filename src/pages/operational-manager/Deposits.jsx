@@ -8,7 +8,7 @@ import { Input } from '../../components/ui/Input';
 import { depositService } from '../../services/depositService';
 import { getBranchById, getBranches } from '../../services/branchService';
 import {
-  DollarSign,
+  Banknote,
   CheckCircle,
   XCircle,
   AlertTriangle,
@@ -207,7 +207,7 @@ const OperationalManagerDeposits = () => {
               <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
               <p className="text-xs text-gray-500 mt-1">{stats.pending} pending</p>
             </div>
-            <DollarSign className="h-8 w-8 text-blue-600" />
+            <Banknote className="h-8 w-8 text-blue-600" />
           </div>
         </Card>
           

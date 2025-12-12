@@ -220,7 +220,8 @@ export const AuthProvider = ({ children }) => {
         await logActivity({
           action: 'user_login',
           performedBy: userId,
-          targetUser: userId
+          targetUser: userId,
+          branchId: userData?.branchId || null
         });
       } catch (logError) {
         console.error('Error logging login activity:', logError);
@@ -247,6 +248,7 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       const userId = currentUser?.uid || userData?.uid;
+      const branchId = userData?.branchId || userBranch || null;
       
       // Log logout activity before signing out
       if (userId) {
@@ -255,7 +257,8 @@ export const AuthProvider = ({ children }) => {
           await logActivity({
             action: 'user_logout',
             performedBy: userId,
-            targetUser: userId
+            targetUser: userId,
+            branchId: branchId
           });
         } catch (logError) {
           console.error('Error logging logout activity:', logError);

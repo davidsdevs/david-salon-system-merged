@@ -40,7 +40,7 @@ import {
   QrCode,
   ShoppingCart, 
   BarChart3, 
-  DollarSign,
+  Banknote,
   ClipboardList,
   UserCog,
   AlertCircle,

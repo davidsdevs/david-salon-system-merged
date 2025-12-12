@@ -4,9 +4,8 @@
  */
 
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { useReactToPrint } from 'react-to-print';
-import { Users as UsersIcon, Plus, Search, Edit, Power, Mail, Scissors, Calendar, ArrowRight, ArrowLeftRight, Printer, Download, Filter, X } from 'lucide-react';
-import { getUsersByBranch, toggleUserStatus, resetUserPassword, getUserById } from '../../services/userService';
+import { Users as UsersIcon, Plus, Search, Edit, Power, Mail, Scissors, Calendar, ArrowRight, ArrowLeftRight, Printer, Download, Filter, X, Key } from 'lucide-react';
+import { getUsersByBranch, toggleUserStatus, getUserById } from '../../services/userService';
 import { getBranchById } from '../../services/branchService';
 import { getActiveLendingForBranch, getActiveLendingFromBranch, getActiveLending } from '../../services/stylistLendingService';
 import { getActiveSchedulesByEmployee } from '../../services/scheduleService';
@@ -15,10 +14,13 @@ import { USER_ROLES, ROLE_LABELS } from '../../utils/constants';
 import { formatDate, getFullName, getInitials } from '../../utils/helpers';
 import BranchStaffFormModal from '../../components/branch/BranchStaffFormModal';
 import StaffServicesCertificatesModal from '../../components/branch/StaffServicesCertificatesModal';
+import ResetPasswordModal from '../../components/branch/ResetPasswordModal';
+import StaffDetailPrint from '../../components/branch/StaffDetailPrint';
 import StaffSchedule from './StaffSchedule';
 import StaffLending from './StaffLending';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import RoleBadges from '../../components/ui/RoleBadges';
+import PDFPreviewModal from '../../components/ui/PDFPreviewModal';
 import toast from 'react-hot-toast';
 
 const StaffManagement = () => {
@@ -36,14 +38,20 @@ const StaffManagement = () => {
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [showServicesCertificatesModal, setShowServicesCertificatesModal] = useState(false);
   const [selectedStaffForConfig, setSelectedStaffForConfig] = useState(null);
+  const [showResetPasswordModal, setShowResetPasswordModal] = useState(false);
+  const [selectedStaffForPasswordReset, setSelectedStaffForPasswordReset] = useState(null);
+  const [showStaffDetailPrint, setShowStaffDetailPrint] = useState(false);
+  const [selectedStaffForPrint, setSelectedStaffForPrint] = useState(null);
+  const [showPDFPreview, setShowPDFPreview] = useState(false);
   const [branchName, setBranchName] = useState('');
   const [activeTab, setActiveTab] = useState('list');
   const [lentStaff, setLentStaff] = useState([]);
   const [lentOutStaff, setLentOutStaff] = useState({});
   const [branchCache, setBranchCache] = useState({});
   
-  // Print ref
-  const printRef = useRef();
+  // Print refs
+  const printRef = useRef(); // For all staff
+  const staffDetailPrintRef = useRef(); // For individual staff
 
   // Branch Manager can only manage these roles
   const MANAGEABLE_ROLES = [
@@ -213,15 +221,52 @@ const StaffManagement = () => {
     }
   };
 
-  // Print handler
-  const handlePrint = useReactToPrint({
-    content: () => printRef.current,
-    documentTitle: `Staff_Data_${new Date().toISOString().split('T')[0]}`,
-    onPrintError: (error) => {
-      console.error('Print error:', error);
-      toast.error('Failed to print. Please try again.');
-    },
-  });
+  // Print handler - opens PDF preview immediately
+  const handlePrint = async () => {
+    if (!printRef.current) {
+      toast.error('Print content not ready. Please try again.');
+      return;
+    }
+    
+    // Wait for images to load before opening preview
+    const images = printRef.current.querySelectorAll('img');
+    if (images.length > 0) {
+      await Promise.all(
+        Array.from(images).map((img) => {
+          if (img.complete && img.naturalHeight !== 0) {
+            return Promise.resolve();
+          }
+          return new Promise((resolve) => {
+            if (img.src && !img.crossOrigin) {
+              img.crossOrigin = 'anonymous';
+            }
+            const onLoad = () => {
+              img.removeEventListener('load', onLoad);
+              img.removeEventListener('error', onError);
+              resolve();
+            };
+            const onError = () => {
+              img.removeEventListener('load', onLoad);
+              img.removeEventListener('error', onError);
+              resolve(); // Continue even if image fails
+            };
+            img.addEventListener('load', onLoad);
+            img.addEventListener('error', onError);
+            setTimeout(() => {
+              img.removeEventListener('load', onLoad);
+              img.removeEventListener('error', onError);
+              resolve();
+            }, 3000);
+          });
+        })
+      );
+      // Additional wait to ensure rendering
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    
+    // Open PDF preview
+    setShowPDFPreview(true);
+  };
 
   // Enhanced filtering with all filters
   const filteredStaff = useMemo(() => {
@@ -441,12 +486,14 @@ const StaffManagement = () => {
     }
   };
 
-  const handleResetPassword = async (email) => {
-    try {
-      await resetUserPassword(email);
-    } catch (error) {
-      // Error handled in service
-    }
+  const handleResetPassword = (member) => {
+    setSelectedStaffForPasswordReset(member);
+    setShowResetPasswordModal(true);
+  };
+
+  const handlePasswordResetSuccess = () => {
+    // Refresh staff list after password reset
+    fetchStaff();
   };
 
   const handleEditStaff = (member) => {
@@ -632,7 +679,7 @@ const StaffManagement = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
                 showFilters 
                   ? 'bg-primary-600 text-white' 
                   : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -654,9 +701,9 @@ const StaffManagement = () => {
                   setDateRangeFilter('all');
                   setLendingFilter('all');
                 }}
-                className="flex items-center gap-1 px-2 py-1 text-xs text-gray-600 hover:text-gray-900"
+                className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
               >
-                <X className="w-3 h-3" />
+                <X className="w-4 h-4" />
                 Clear
               </button>
             )}
@@ -674,14 +721,14 @@ const StaffManagement = () => {
                 }
                 handlePrint();
               }}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
             >
               <Printer className="w-4 h-4" />
               Print Staff Data
             </button>
             <button
               onClick={exportToCSV}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
             >
               <Download className="w-4 h-4" />
               Export CSV
@@ -814,7 +861,7 @@ const StaffManagement = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredStaff.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan="7" className="px-6 py-12 text-center text-gray-500">
                     No staff members found
                   </td>
                 </tr>
@@ -828,8 +875,22 @@ const StaffManagement = () => {
                   <tr key={memberId} className={`hover:bg-gray-50 ${isLentToThisBranch ? 'bg-blue-50' : ''}`}>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
-                        <div className="flex-shrink-0 w-10 h-10 bg-primary-600 rounded-full flex items-center justify-center text-white font-semibold">
-                          {getInitials(member)}
+                        <div className="flex-shrink-0 w-10 h-10 rounded-full overflow-hidden border-2 border-gray-200">
+                          {(member.imageURL || member.photoURL) ? (
+                            <img 
+                              src={member.imageURL || member.photoURL} 
+                              alt={getFullName(member)}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                const placeholder = e.target.parentElement.querySelector('.photo-initials');
+                                if (placeholder) placeholder.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          <div className="photo-initials w-full h-full bg-primary-600 flex items-center justify-center text-white font-semibold text-sm" style={{ display: (member.imageURL || member.photoURL) ? 'none' : 'flex' }}>
+                            {member.firstName?.[0]?.toUpperCase() || ''}{member.lastName?.[0]?.toUpperCase() || ''}
+                          </div>
                         </div>
                         <div className="ml-4">
                           <div className="flex items-center gap-2">
@@ -907,7 +968,7 @@ const StaffManagement = () => {
                         <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => handleViewServices(member)}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="flex items-center justify-center w-9 h-9 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors"
                             title="View Services & Certificates (Read-only)"
                           >
                             <Scissors className="w-5 h-5" />
@@ -919,28 +980,42 @@ const StaffManagement = () => {
                         <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => handleEditStaff(member)}
-                            className="text-gray-600 hover:text-gray-900"
+                            className="flex items-center justify-center w-9 h-9 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
                             title="Edit Staff"
                           >
                             <Edit className="w-5 h-5" />
                           </button>
                           <button
                             onClick={() => handleConfigureServices(member)}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="flex items-center justify-center w-9 h-9 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded-lg transition-colors"
                             title="Configure Services & Certificates"
                           >
                             <Scissors className="w-5 h-5" />
                           </button>
                           <button
-                            onClick={() => handleResetPassword(member.email)}
-                            className="text-orange-600 hover:text-orange-900"
+                            onClick={() => handleResetPassword(member)}
+                            className="flex items-center justify-center w-9 h-9 text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded-lg transition-colors"
                             title="Reset Password"
                           >
-                            <Mail className="w-5 h-5" />
+                            <Key className="w-5 h-5" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedStaffForPrint(member);
+                              setShowStaffDetailPrint(true);
+                            }}
+                            className="flex items-center justify-center w-9 h-9 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded-lg transition-colors"
+                            title="Print Staff Detail"
+                          >
+                            <Printer className="w-5 h-5" />
                           </button>
                           <button
                             onClick={() => handleToggleStatus(member.id, member.isActive)}
-                            className={member.isActive ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}
+                            className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${
+                              member.isActive 
+                                ? 'text-red-600 hover:text-red-900 hover:bg-red-50' 
+                                : 'text-green-600 hover:text-green-900 hover:bg-green-50'
+                            }`}
                             title={member.isActive ? 'Deactivate' : 'Activate'}
                           >
                             <Power className="w-5 h-5" />
@@ -963,46 +1038,128 @@ const StaffManagement = () => {
         <StaffLending />
       )}
 
-      {/* Print View - Hidden */}
-      <div ref={printRef} style={{ display: 'none' }}>
-        <div className="p-6">
-          <div className="text-center mb-4 border-b pb-3">
-            <h1 className="text-2xl font-bold">Staff Data Report</h1>
-            <p className="text-sm text-gray-600 mt-1">{branchName}</p>
-            <p className="text-xs text-gray-500 mt-1">Generated on {formatDate(new Date(), 'MMM dd, yyyy hh:mm a')}</p>
+      {/* Print View - Rendered off-screen for PDF generation */}
+      <div ref={printRef} style={{ position: 'fixed', left: '-200%', top: 0, width: '8.5in', zIndex: -1 }}>
+        <style>{`
+          @media print {
+            @page {
+              margin: 1cm 1cm 1.5cm 1cm;
+              size: letter;
+            }
+            * {
+              color: #000 !important;
+              background: transparent !important;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .print-break {
+              page-break-after: always;
+            }
+            .print-avoid-break {
+              page-break-inside: avoid;
+            }
+            table {
+              font-size: 12px;
+              border-collapse: collapse;
+              line-height: 1.4;
+            }
+            th, td {
+              padding: 8px 10px !important;
+              border: 1px solid #000 !important;
+              background: transparent !important;
+              text-align: center !important;
+              vertical-align: middle !important;
+            }
+            thead th {
+              border-bottom: 2px solid #000 !important;
+              font-weight: 600;
+            }
+            tbody tr {
+              border-bottom: 1px solid #000 !important;
+            }
+          }
+        `}</style>
+        <div className="p-4" style={{ fontSize: '12px', padding: '16px', lineHeight: '1.5' }}>
+          <div className="text-center mb-4 border-b border-black pb-3" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #000' }}>
+            <h1 className="font-bold" style={{ fontSize: '18px', marginBottom: '4px' }}>Staff Data Report</h1>
+            <p className="font-semibold" style={{ fontSize: '14px', marginBottom: '4px' }}>{branchName}</p>
+            <p style={{ fontSize: '12px' }}>Generated: {formatDate(new Date(), 'MMM dd, yyyy')}</p>
           </div>
-          <table className="w-full text-xs border-collapse">
+          
+          {/* Summary Stats - Lines Only */}
+          <div className="mb-4 grid grid-cols-4 gap-3 print-avoid-break" style={{ fontSize: '12px', marginBottom: '16px', gap: '12px' }}>
+            <div className="border border-black p-2 text-center" style={{ border: '1px solid #000', padding: '8px' }}>
+              <div className="font-bold" style={{ fontSize: '16px', marginBottom: '4px' }}>{filteredStaff.length}</div>
+              <div style={{ fontSize: '11px' }}>Total</div>
+            </div>
+            <div className="border border-black p-2 text-center" style={{ border: '1px solid #000', padding: '8px' }}>
+              <div className="font-bold" style={{ fontSize: '16px', marginBottom: '4px' }}>{filteredStaff.filter(s => s.isActive).length}</div>
+              <div style={{ fontSize: '11px' }}>Active</div>
+            </div>
+            <div className="border border-black p-2 text-center" style={{ border: '1px solid #000', padding: '8px' }}>
+              <div className="font-bold" style={{ fontSize: '16px', marginBottom: '4px' }}>{filteredStaff.filter(s => !s.isActive).length}</div>
+              <div style={{ fontSize: '11px' }}>Inactive</div>
+            </div>
+            <div className="border border-black p-2 text-center" style={{ border: '1px solid #000', padding: '8px' }}>
+              <div className="font-bold" style={{ fontSize: '16px', marginBottom: '4px' }}>
+                {filteredStaff.filter(s => {
+                  const roles = s.roles || (s.role ? [s.role] : []);
+                  return roles.includes(USER_ROLES.STYLIST);
+                }).length}
+              </div>
+              <div style={{ fontSize: '11px' }}>Stylists</div>
+            </div>
+          </div>
+
+          {/* Staff Table - Lines Only, Readable */}
+          <table className="w-full" style={{ fontSize: '12px', borderCollapse: 'collapse', width: '100%', lineHeight: '1.5' }}>
             <thead>
-              <tr className="bg-gray-100">
-                <th className="border p-2 text-left">Name</th>
-                <th className="border p-2 text-left">Email</th>
-                <th className="border p-2 text-left">Roles</th>
-                <th className="border p-2 text-left">Status</th>
-                <th className="border p-2 text-left">Shifts</th>
-                <th className="border p-2 text-left">Joined</th>
+              <tr style={{ borderBottom: '2px solid #000' }}>
+                <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Name</th>
+                <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Email</th>
+                <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Phone</th>
+                <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Roles</th>
+                <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Status</th>
+                <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Shifts</th>
+                <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Joined</th>
               </tr>
             </thead>
             <tbody>
-              {filteredStaff.map((member) => {
+              {filteredStaff.map((member, index) => {
                 const roles = member.roles || (member.role ? [member.role] : []);
                 const shifts = member.shifts || {};
                 const shiftCount = Object.keys(shifts).length;
+                const shiftDetails = Object.entries(shifts).slice(0, 2).map(([day, shift]) => 
+                  `${day.charAt(0).toUpperCase()}: ${shift.start}-${shift.end}`
+                ).join('; ');
+                const hasMoreShifts = shiftCount > 2;
                 
                 return (
-                  <tr key={member.id || member.uid}>
-                    <td className="border p-2">{getFullName(member)}</td>
-                    <td className="border p-2">{member.email || 'N/A'}</td>
-                    <td className="border p-2">{roles.map(role => ROLE_LABELS[role] || role).join(', ')}</td>
-                    <td className="border p-2">{member.isActive ? 'Active' : 'Inactive'}</td>
-                    <td className="border p-2">{shiftCount > 0 ? `${shiftCount} days` : 'No shifts'}</td>
-                    <td className="border p-2">{member.createdAt ? formatDate(member.createdAt) : 'N/A'}</td>
+                  <tr key={member.id || member.uid} style={{ pageBreakInside: 'avoid', borderBottom: '1px solid #000' }}>
+                    <td className="border border-black font-medium" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{getFullName(member)}</td>
+                    <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{member.email || 'N/A'}</td>
+                    <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{member.phone || 'N/A'}</td>
+                    <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{roles.map(role => ROLE_LABELS[role] || role).join(', ')}</td>
+                    <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>
+                      {member.isActive ? 'Active' : 'Inactive'}
+                    </td>
+                    <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>
+                      {shiftCount > 0 ? (
+                        <span>{shiftCount} days{hasMoreShifts ? '...' : ''}</span>
+                      ) : (
+                        'None'
+                      )}
+                    </td>
+                    <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{member.createdAt ? formatDate(member.createdAt, 'MMM dd, yyyy') : 'N/A'}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          <div className="mt-4 text-xs text-gray-500 text-center">
-            Total Staff: {filteredStaff.length} | Active: {filteredStaff.filter(s => s.isActive).length}
+          
+          {/* Footer - Minimal Lines */}
+          <div className="mt-4 pt-2 border-t border-black text-center" style={{ fontSize: '11px', marginTop: '16px', paddingTop: '8px', borderTop: '1px solid #000' }}>
+            <p>Total: {filteredStaff.length} | Active: {filteredStaff.filter(s => s.isActive).length} | Inactive: {filteredStaff.filter(s => !s.isActive).length}</p>
           </div>
         </div>
       </div>
@@ -1034,6 +1191,38 @@ const StaffManagement = () => {
           isReadOnly={selectedStaffForConfig?.isLent || false}
         />
       )}
+
+      {showResetPasswordModal && selectedStaffForPasswordReset && (
+        <ResetPasswordModal
+          staff={selectedStaffForPasswordReset}
+          onClose={() => {
+            setShowResetPasswordModal(false);
+            setSelectedStaffForPasswordReset(null);
+          }}
+          onSuccess={handlePasswordResetSuccess}
+        />
+      )}
+
+      {showStaffDetailPrint && selectedStaffForPrint && (
+        <StaffDetailPrint
+          staff={selectedStaffForPrint}
+          branchName={branchName}
+          branchId={userBranch}
+          onClose={() => {
+            setShowStaffDetailPrint(false);
+            setSelectedStaffForPrint(null);
+          }}
+        />
+      )}
+
+      {/* PDF Preview Modal for All Staff */}
+      <PDFPreviewModal
+        isOpen={showPDFPreview}
+        onClose={() => setShowPDFPreview(false)}
+        contentRef={printRef}
+        title="Staff Data - PDF Preview"
+        fileName={`Staff_Data_${new Date().toISOString().split('T')[0]}`}
+      />
 
     </div>
   );

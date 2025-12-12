@@ -140,11 +140,12 @@ export const createBill = async (billData, currentUser) => {
                 branchId: billData.branchId,
                 productId: item.id,
                 quantity: item.quantity,
-                reason: 'Transaction Sale',
+                reason: 'Transaction Sale (OTC)',
                 notes: `Bill ID: ${docRef.id}, Product: ${item.name}`,
                 createdBy: billData.createdBy || 'system',
                 productName: item.name || 'Unknown Product',
-                batches: item.batches // Pass the batches from the transaction
+                batches: item.batches, // Pass the batches from the transaction
+                usageType: 'otc' // Explicitly mark as OTC sale
               });
               
               if (!deductionResult.success) {
@@ -181,10 +182,11 @@ export const createBill = async (billData, currentUser) => {
                 branchId: billData.branchId,
                 productId: item.id,
                 quantity: item.quantity,
-                reason: 'Transaction Sale',
+                reason: 'Transaction Sale (OTC)',
                 notes: `Bill ID: ${docRef.id}, Product: ${item.name}`,
                 createdBy: billData.createdBy || 'system',
-                productName: item.name || 'Unknown Product'
+                productName: item.name || 'Unknown Product',
+                usageType: 'otc' // Explicitly mark as OTC sale
               });
               
               if (!deductionResult.success) {
@@ -224,6 +226,58 @@ export const createBill = async (billData, currentUser) => {
         console.error('Error deducting stock:', stockError);
         // Don't fail the transaction if stock deduction fails, but log it
         toast.error('Transaction created but stock deduction failed. Please update stock manually.');
+      }
+    }
+
+    // Deduct products for services performed (salon-use products)
+    if (salesType === 'service' || salesType === 'mixed') {
+      try {
+        const serviceItems = items.filter(item => item.type === 'service');
+        const { inventoryService } = await import('./inventoryService');
+        const { getServiceById } = await import('./serviceManagementService');
+        
+        for (const serviceItem of serviceItems) {
+          if (!serviceItem.id) continue;
+          
+          try {
+            // Get service details including product mappings
+            const service = await getServiceById(serviceItem.id);
+            if (!service || !service.productMappings || service.productMappings.length === 0) {
+              continue; // No product mappings for this service
+            }
+            
+            // Deduct products for this service (salon-use batches only)
+            for (const mapping of service.productMappings) {
+              if (!mapping.productId || !mapping.quantity) continue;
+              
+              // Deduct from salon-use batches only
+              const deductionResult = await inventoryService.deductStockFIFO({
+                branchId: billData.branchId,
+                productId: mapping.productId,
+                quantity: mapping.quantity,
+                reason: 'Service Use',
+                notes: `Service: ${service.name || serviceItem.name}, Bill ID: ${docRef.id}`,
+                createdBy: billData.createdBy || 'system',
+                productName: mapping.productName || 'Unknown Product',
+                usageType: 'salon-use' // Only use salon-use batches for services
+              });
+              
+              if (!deductionResult.success) {
+                console.warn(`⚠️ Service product deduction failed for ${mapping.productName}:`, deductionResult.message);
+                // Log but don't fail the transaction
+              } else {
+                console.log(`✅ Service product deducted: ${mapping.productName} - ${mapping.quantity} units (salon-use)`);
+              }
+            }
+          } catch (serviceError) {
+            console.error(`Error processing service ${serviceItem.id}:`, serviceError);
+            // Continue with other services
+          }
+        }
+      } catch (serviceStockError) {
+        console.error('Error deducting service products:', serviceStockError);
+        // Don't fail the transaction if service product deduction fails
+        toast.error('Transaction created but service product deduction failed. Please update stock manually.');
       }
     }
     

@@ -3,12 +3,13 @@
  * View and track stylist commissions from product sales
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { DollarSign, Calendar, User, Search, Download, TrendingUp, Filter, Receipt } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Banknote, Calendar, User, Search, Download, TrendingUp, Filter, Receipt, Printer } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import PDFPreviewModal from '../../components/ui/PDFPreviewModal';
 import { formatDate } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 import { exportToExcel } from '../../utils/excelExport';
@@ -20,10 +21,13 @@ const Commissions = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStylist, setSelectedStylist] = useState('all');
+  const [selectedStylistForSummary, setSelectedStylistForSummary] = useState(null);
   const [dateRange, setDateRange] = useState({
     start: '',
     end: ''
   });
+  const [showPDFPreview, setShowPDFPreview] = useState(false);
+  const printRef = useRef(null);
 
   useEffect(() => {
     if (userBranch) {
@@ -321,6 +325,12 @@ const Commissions = () => {
     return Object.values(summary).sort((a, b) => b.totalCommission - a.totalCommission);
   }, [filteredTransactions]);
 
+  // Get summary for selected stylist
+  const selectedStylistSummary = useMemo(() => {
+    if (!selectedStylistForSummary) return null;
+    return commissionSummary.find(s => s.stylistId === selectedStylistForSummary);
+  }, [commissionSummary, selectedStylistForSummary]);
+
   const handleExportCSV = () => {
     // Legacy CSV export (keeping for backward compatibility)
     const headers = ['Date', 'Stylist', 'Product', 'Quantity', 'Unit Cost', 'Commission %', 'Commission Amount', 'Total Sale', 'Client', 'Receipt #'];
@@ -395,6 +405,54 @@ const Commissions = () => {
     }
   };
 
+  const handlePrint = () => {
+    if (!printRef.current) {
+      toast.error('Print content not ready. Please try again.');
+      return;
+    }
+    
+    // Wait for images to load before opening preview
+    const images = printRef.current.querySelectorAll('img');
+    if (images.length > 0) {
+      Promise.all(
+        Array.from(images).map((img) => {
+          if (img.complete && img.naturalHeight !== 0) {
+            return Promise.resolve();
+          }
+          return new Promise((resolve) => {
+            if (img.src && !img.crossOrigin) {
+              img.crossOrigin = 'anonymous';
+            }
+            const onLoad = () => {
+              img.removeEventListener('load', onLoad);
+              img.removeEventListener('error', onError);
+              resolve();
+            };
+            const onError = () => {
+              img.removeEventListener('load', onLoad);
+              img.removeEventListener('error', onError);
+              resolve(); // Continue even if image fails
+            };
+            img.addEventListener('load', onLoad);
+            img.addEventListener('error', onError);
+            setTimeout(() => {
+              img.removeEventListener('load', onLoad);
+              img.removeEventListener('error', onError);
+              resolve();
+            }, 3000);
+          });
+        })
+      ).then(() => {
+        // Additional wait to ensure rendering
+        setTimeout(() => {
+          setShowPDFPreview(true);
+        }, 300);
+      });
+    } else {
+      setShowPDFPreview(true);
+    }
+  };
+
   const totalCommission = filteredTransactions.reduce((sum, t) => sum + t.commissionPoints, 0);
   const totalSales = filteredTransactions.reduce((sum, t) => sum + t.totalAmount, 0);
 
@@ -412,12 +470,20 @@ const Commissions = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <DollarSign className="h-6 w-6 text-purple-600" />
+            <Banknote className="h-6 w-6 text-purple-600" />
             Commissions
           </h1>
           <p className="text-sm text-gray-500 mt-1">Track stylist commissions from product sales</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            title="Print PDF"
+          >
+            <Printer className="h-4 w-4" />
+            <span className="hidden sm:inline">Print</span>
+          </button>
           <button
             onClick={handleExportCSV}
             className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
@@ -447,7 +513,7 @@ const Commissions = () => {
                 ₱{totalCommission.toFixed(2)}
               </p>
             </div>
-            <DollarSign className="h-10 w-10 text-purple-200" />
+            <Banknote className="h-10 w-10 text-purple-200" />
           </div>
         </div>
         
@@ -531,44 +597,41 @@ const Commissions = () => {
         </div>
       </div>
 
-      {/* Commission Summary by Stylist */}
-      {commissionSummary.length > 0 && (
+      {/* Commission Summary by Stylist - Only shown when stylist is clicked */}
+      {selectedStylistForSummary && selectedStylistSummary && (
         <div className="bg-white rounded-lg shadow">
-          <div className="p-4 border-b border-gray-200">
-            <h2 className="text-lg font-semibold text-gray-900">Commission Summary by Stylist</h2>
+          <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">
+              Commission Summary - {selectedStylistSummary.stylistName}
+            </h2>
+            <button
+              onClick={() => setSelectedStylistForSummary(null)}
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              Close
+            </button>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stylist</th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Transactions</th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total Sales</th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total Commission</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {commissionSummary.map((summary) => (
-                  <tr key={summary.stylistId} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <User className="h-5 w-5 text-gray-400 mr-2" />
-                        <span className="text-sm font-medium text-gray-900">{summary.stylistName}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
-                      {summary.transactionCount}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">
-                      ₱{summary.totalSales.toFixed(2)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-purple-600">
-                      ₱{summary.totalCommission.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-sm text-gray-500">Transactions</p>
+                <p className="text-2xl font-bold text-gray-900 mt-1">
+                  {selectedStylistSummary.transactionCount}
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-sm text-gray-500">Total Sales</p>
+                <p className="text-2xl font-bold text-green-600 mt-1">
+                  ₱{selectedStylistSummary.totalSales.toFixed(2)}
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-sm text-gray-500">Total Commission</p>
+                <p className="text-2xl font-bold text-purple-600 mt-1">
+                  ₱{selectedStylistSummary.totalCommission.toFixed(2)}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -581,7 +644,7 @@ const Commissions = () => {
         <div className="overflow-x-auto">
           {filteredTransactions.length === 0 ? (
             <div className="text-center py-12">
-              <DollarSign className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+              <Banknote className="h-12 w-12 text-gray-400 mx-auto mb-2" />
               <p className="text-gray-500">No commission transactions found</p>
             </div>
           ) : (
@@ -610,10 +673,15 @@ const Commissions = () => {
                     <tr key={transaction.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{date}</td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
+                        <button
+                          onClick={() => setSelectedStylistForSummary(transaction.commissionerId)}
+                          className="flex items-center hover:text-purple-600 transition-colors"
+                        >
                           <User className="h-4 w-4 text-gray-400 mr-2" />
-                          <span className="text-sm text-gray-900">{transaction.commissionerName}</span>
-                        </div>
+                          <span className="text-sm text-gray-900 hover:text-purple-600 font-medium cursor-pointer">
+                            {transaction.commissionerName}
+                          </span>
+                        </button>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{transaction.productName}</td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-900">{transaction.quantity}</td>
@@ -633,6 +701,156 @@ const Commissions = () => {
           )}
         </div>
       </div>
+
+      {/* Print View - Rendered off-screen for PDF generation */}
+      <div ref={printRef} style={{ position: 'fixed', left: '-200%', top: 0, width: '8.5in', zIndex: -1 }}>
+        <style>{`
+          @media print {
+            @page {
+              margin: 1cm 1cm 1.5cm 1cm;
+              size: letter;
+            }
+            * {
+              color: #000 !important;
+              background: transparent !important;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .print-break {
+              page-break-after: always;
+            }
+            .print-avoid-break {
+              page-break-inside: avoid;
+            }
+            table {
+              font-size: 12px;
+              border-collapse: collapse;
+              line-height: 1.4;
+            }
+            th, td {
+              padding: 8px 10px !important;
+              border: 1px solid #000 !important;
+              background: transparent !important;
+              text-align: center !important;
+              vertical-align: middle !important;
+            }
+            thead th {
+              border-bottom: 2px solid #000 !important;
+              font-weight: 600;
+            }
+            tbody tr {
+              border-bottom: 1px solid #000 !important;
+            }
+          }
+        `}</style>
+        <div className="p-4" style={{ fontSize: '12px', padding: '16px', lineHeight: '1.5' }}>
+          <div className="text-center mb-4 border-b border-black pb-3" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '1px solid #000' }}>
+            <h1 className="font-bold" style={{ fontSize: '18px', marginBottom: '4px' }}>Commissions Report</h1>
+            <p className="font-semibold" style={{ fontSize: '14px', marginBottom: '4px' }}>David's Salon Management System</p>
+            <p style={{ fontSize: '12px' }}>Generated: {formatDate(new Date(), 'MMM dd, yyyy')}</p>
+          </div>
+          
+          {/* Summary Stats */}
+          <div className="mb-4 grid grid-cols-3 gap-3 print-avoid-break" style={{ fontSize: '12px', marginBottom: '16px', gap: '12px' }}>
+            <div className="border border-black p-2 text-center" style={{ border: '1px solid #000', padding: '8px' }}>
+              <div className="font-bold" style={{ fontSize: '16px', marginBottom: '4px' }}>₱{totalCommission.toFixed(2)}</div>
+              <div style={{ fontSize: '11px' }}>Total Commissions</div>
+            </div>
+            <div className="border border-black p-2 text-center" style={{ border: '1px solid #000', padding: '8px' }}>
+              <div className="font-bold" style={{ fontSize: '16px', marginBottom: '4px' }}>₱{totalSales.toFixed(2)}</div>
+              <div style={{ fontSize: '11px' }}>Total Sales</div>
+            </div>
+            <div className="border border-black p-2 text-center" style={{ border: '1px solid #000', padding: '8px' }}>
+              <div className="font-bold" style={{ fontSize: '16px', marginBottom: '4px' }}>{filteredTransactions.length}</div>
+              <div style={{ fontSize: '11px' }}>Transactions</div>
+            </div>
+          </div>
+
+          {/* Commission Summary by Stylist */}
+          {commissionSummary.length > 0 && (
+            <div className="mb-4 print-avoid-break" style={{ marginBottom: '16px' }}>
+              <h2 className="font-bold mb-2" style={{ fontSize: '14px', marginBottom: '8px' }}>Commission Summary by Stylist</h2>
+              <table className="w-full" style={{ fontSize: '12px', borderCollapse: 'collapse', width: '100%', lineHeight: '1.5' }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid #000' }}>
+                    <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Stylist</th>
+                    <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Transactions</th>
+                    <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Total Sales</th>
+                    <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Total Commission</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {commissionSummary.map((summary) => (
+                    <tr key={summary.stylistId} style={{ pageBreakInside: 'avoid', borderBottom: '1px solid #000' }}>
+                      <td className="border border-black font-medium" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{summary.stylistName}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{summary.transactionCount}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>₱{summary.totalSales.toFixed(2)}</td>
+                      <td className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>₱{summary.totalCommission.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Transactions Table */}
+          <div className="print-avoid-break" style={{ pageBreakInside: 'avoid' }}>
+            <h2 className="font-bold mb-2" style={{ fontSize: '14px', marginBottom: '8px' }}>Commission Transactions</h2>
+            <table className="w-full" style={{ fontSize: '12px', borderCollapse: 'collapse', width: '100%', lineHeight: '1.5' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #000' }}>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Date</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Stylist</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Product</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Qty</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Unit Cost</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Comm %</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Commission</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Total Sale</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Client</th>
+                  <th className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>Receipt #</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTransactions.map((transaction) => {
+                  const date = transaction.transactionDate?.toDate 
+                    ? formatDate(transaction.transactionDate.toDate(), 'MMM dd, yyyy HH:mm')
+                    : formatDate(transaction.transactionDate, 'MMM dd, yyyy HH:mm');
+                  
+                  return (
+                    <tr key={transaction.id} style={{ pageBreakInside: 'avoid', borderBottom: '1px solid #000' }}>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{date}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{transaction.commissionerName}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{transaction.productName}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{transaction.quantity}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>₱{transaction.unitCost.toFixed(2)}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{transaction.commissionPercentage}%</td>
+                      <td className="border border-black font-semibold" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle', fontWeight: '600' }}>₱{transaction.commissionPoints.toFixed(2)}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>₱{transaction.totalAmount.toFixed(2)}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{transaction.clientName}</td>
+                      <td className="border border-black" style={{ border: '1px solid #000', padding: '8px 10px', fontSize: '12px', textAlign: 'center', verticalAlign: 'middle' }}>{transaction.receiptNumber}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          
+          {/* Footer */}
+          <div className="mt-4 pt-2 border-t border-black text-center" style={{ fontSize: '11px', marginTop: '16px', paddingTop: '8px', borderTop: '1px solid #000' }}>
+            <p>Total Commissions: ₱{totalCommission.toFixed(2)} | Total Sales: ₱{totalSales.toFixed(2)} | Transactions: {filteredTransactions.length}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* PDF Preview Modal */}
+      <PDFPreviewModal
+        isOpen={showPDFPreview}
+        onClose={() => setShowPDFPreview(false)}
+        contentRef={printRef}
+        title="Commissions Report - PDF Preview"
+        fileName={`Commissions_Report_${new Date().toISOString().split('T')[0]}`}
+      />
     </div>
   );
 };

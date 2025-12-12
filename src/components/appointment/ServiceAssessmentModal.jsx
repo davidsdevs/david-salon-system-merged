@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { X, Scissors, DollarSign } from 'lucide-react';
+import { X, Scissors, Banknote } from 'lucide-react';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import toast from 'react-hot-toast';
 
@@ -247,7 +247,7 @@ const ServiceAssessmentModal = ({
               </>
             ) : (
               <>
-                <DollarSign className="w-4 h-4" />
+                <Banknote className="w-4 h-4" />
                 <span>Confirm & Proceed</span>
               </>
             )}

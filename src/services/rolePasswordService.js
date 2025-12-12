@@ -4,7 +4,7 @@
  */
 
 import bcrypt from 'bcryptjs';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 /**
@@ -71,7 +71,7 @@ export const setRolePassword = async (userId, role, password) => {
     
     await updateDoc(userRef, {
       rolePasswords,
-      updatedAt: new Date()
+      updatedAt: Timestamp.now()
     });
   } catch (error) {
     console.error('Error setting role password:', error);
@@ -112,7 +112,6 @@ export const verifyRolePassword = async (userId, role, password) => {
  */
 export const initializeRolePasswords = async (userId, roles, password) => {
   try {
-    const hashedPassword = await hashPassword(password);
     const userRef = doc(db, 'users', userId);
     const userDoc = await getDoc(userRef);
     
@@ -120,17 +119,52 @@ export const initializeRolePasswords = async (userId, roles, password) => {
       throw new Error('User not found');
     }
     
+    // Hash password separately for each role (ensures unique hashes)
     const rolePasswords = {};
-    roles.forEach(role => {
-      rolePasswords[role] = hashedPassword;
-    });
+    for (const role of roles) {
+      rolePasswords[role] = await hashPassword(password);
+    }
     
     await updateDoc(userRef, {
       rolePasswords,
-      updatedAt: new Date()
+      updatedAt: Timestamp.now()
     });
   } catch (error) {
     console.error('Error initializing role passwords:', error);
+    throw error;
+  }
+};
+
+/**
+ * Initialize role passwords with a map of role-specific passwords
+ * @param {string} userId - User ID
+ * @param {Array<string>} roles - Array of roles
+ * @param {Object} rolePasswordsMap - Map of role to password: { role: password }
+ * @param {string} defaultPassword - Default password if role not in map
+ * @returns {Promise<void>}
+ */
+export const initializeRolePasswordsWithMap = async (userId, roles, rolePasswordsMap = {}, defaultPassword = 'DefaultPass123!') => {
+  try {
+    const userRef = doc(db, 'users', userId);
+    const userDoc = await getDoc(userRef);
+    
+    if (!userDoc.exists()) {
+      throw new Error('User not found');
+    }
+    
+    // Hash password separately for each role (use specific password if provided, otherwise default)
+    const hashedRolePasswords = {};
+    for (const role of roles) {
+      const password = rolePasswordsMap[role] || defaultPassword;
+      hashedRolePasswords[role] = await hashPassword(password);
+    }
+    
+    await updateDoc(userRef, {
+      rolePasswords: hashedRolePasswords,
+      updatedAt: Timestamp.now()
+    });
+  } catch (error) {
+    console.error('Error initializing role passwords with map:', error);
     throw error;
   }
 };

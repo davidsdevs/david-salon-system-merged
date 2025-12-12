@@ -80,6 +80,7 @@ export const ROUTES = {
   RECEPTIONIST_ARRIVALS: '/receptionist/arrivals',
   RECEPTIONIST_CLIENTS: '/receptionist/clients',
   RECEPTIONIST_BILLING: '/receptionist/billing',
+  RECEPTIONIST_SALES_REPORT: '/receptionist/sales-report',
   RECEPTIONIST_STAFF_SCHEDULE: '/receptionist/staff-schedule',
   RECEPTIONIST_SERVICES: '/receptionist/services',
   RECEPTIONIST_PRODUCTS: '/receptionist/products',

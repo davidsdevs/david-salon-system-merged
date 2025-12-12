@@ -12,7 +12,7 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  DollarSign,
+  Banknote,
   RefreshCw,
   AlertTriangle,
   FileText,
@@ -364,7 +364,7 @@ const PurchaseOrders = () => {
           
         <Card className="p-4">
           <div className="flex items-center">
-            <DollarSign className="h-8 w-8 text-purple-600" />
+            <Banknote className="h-8 w-8 text-purple-600" />
             <div className="ml-3">
               <p className="text-sm font-medium text-gray-600">Total Value</p>
               <p className="text-xl font-bold text-gray-900">₱{orderStats.totalValue.toLocaleString()}</p>

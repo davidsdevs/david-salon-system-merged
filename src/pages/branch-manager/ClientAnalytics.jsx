@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import { TrendingUp, Users, Star, DollarSign, Award } from 'lucide-react';
+import { TrendingUp, Users, Star, Banknote, Award } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { getClients, getServiceHistory } from '../../services/clientService';
 import { getBranchFeedbackStats } from '../../services/feedbackService';
@@ -158,7 +158,7 @@ const ClientAnalytics = () => {
                   ₱{avgMetrics.totalRevenue.toFixed(2)}
                 </p>
               </div>
-              <DollarSign className="h-8 w-8 text-green-600 opacity-50" />
+              <Banknote className="h-8 w-8 text-green-600 opacity-50" />
             </div>
           </div>
         </Card>

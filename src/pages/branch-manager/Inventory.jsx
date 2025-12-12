@@ -16,7 +16,7 @@ import {
   AlertTriangle,
   TrendingUp,
   TrendingDown,
-  DollarSign,
+  Banknote,
   BarChart3,
   CheckCircle,
   RefreshCw,
@@ -1618,7 +1618,7 @@ const Inventory = () => {
 
         <Card className="p-6">
           <div className="flex items-center">
-            <DollarSign className="h-8 w-8 text-purple-600" />
+            <Banknote className="h-8 w-8 text-purple-600" />
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Value</p>
                   <p className="text-2xl font-bold text-gray-900">₱{stats.totalValue.toLocaleString()}</p>
@@ -1880,7 +1880,7 @@ const Inventory = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <Card className="p-6">
                   <div className="flex items-center">
-                    <DollarSign className="h-8 w-8 text-green-600" />
+                    <Banknote className="h-8 w-8 text-green-600" />
                     <div className="ml-4">
                       <p className="text-sm font-medium text-gray-600">Total Revenue</p>
                       <p className="text-2xl font-bold text-gray-900">₱{summaryStats.totalRevenue.toLocaleString()}</p>
@@ -1954,7 +1954,7 @@ const Inventory = () => {
                     
                   <Card className="p-6">
                     <div className="flex items-center">
-                      <DollarSign className="h-8 w-8 text-purple-600" />
+                      <Banknote className="h-8 w-8 text-purple-600" />
                       <div className="ml-4">
                         <p className="text-sm font-medium text-gray-600">Inventory Value</p>
                         <p className="text-2xl font-bold text-gray-900">₱{inventoryStats.totalValue.toLocaleString()}</p>
@@ -2083,7 +2083,7 @@ const Inventory = () => {
               
             <Card className="p-4">
               <div className="flex items-center">
-                <DollarSign className="h-8 w-8 text-purple-600" />
+                <Banknote className="h-8 w-8 text-purple-600" />
                 <div className="ml-3">
                   <p className="text-sm font-medium text-gray-600">Total Value</p>
                   <p className="text-xl font-bold text-gray-900">₱{orderStats.totalValue.toLocaleString()}</p>
@@ -2331,7 +2331,7 @@ const Inventory = () => {
                   <p className="text-xs text-gray-500 mt-1">Total stock value</p>
                 </div>
                 <div className="p-3 bg-blue-100 rounded-full">
-                  <DollarSign className="h-6 w-6 text-blue-600" />
+                  <Banknote className="h-6 w-6 text-blue-600" />
                 </div>
               </div>
             </Card>
@@ -2402,7 +2402,7 @@ const Inventory = () => {
                             ₱{analyticsData.totalProfit?.toLocaleString() || '0'}
                           </p>
                         </div>
-                        <DollarSign className="h-8 w-8 text-green-600" />
+                        <Banknote className="h-8 w-8 text-green-600" />
                       </div>
                     </Card>
 
@@ -2843,7 +2843,7 @@ const Inventory = () => {
               </Card>
               <Card className="p-4">
                 <div className="flex items-center">
-                  <DollarSign className="h-8 w-8 text-orange-600" />
+                  <Banknote className="h-8 w-8 text-orange-600" />
                   <div className="ml-3">
                     <p className="text-sm font-medium text-gray-600">Avg Price</p>
                     <p className="text-xl font-bold text-gray-900">

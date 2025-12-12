@@ -24,7 +24,7 @@ import {
   Mail,
   MapPin,
   Globe,
-  DollarSign,
+  Banknote,
   Package,
   Calendar,
   Star,

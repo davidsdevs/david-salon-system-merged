@@ -86,6 +86,7 @@ export const saveService = async (serviceData, currentUser) => {
       isChemical: serviceData.isChemical || false,
       isActive: serviceData.isActive !== undefined ? serviceData.isActive : true,
       inventoryItems: serviceData.inventoryItems || [], // Array of {itemId, itemName, itemUnit, quantity}
+      productMappings: serviceData.productMappings || [], // Array of {productId, productName, quantity, unit, percentage}
       updatedAt: Timestamp.now(),
       updatedBy: currentUser.uid
     };
@@ -99,9 +100,16 @@ export const saveService = async (serviceData, currentUser) => {
     
     await setDoc(serviceRef, data, { merge: true });
 
-    // Update product mappings in products collection
+    // Update legacy product mappings in products collection (for backward compatibility)
+    // This maintains the old serviceProductMapping structure in products
     if (serviceData.productMappings && Array.isArray(serviceData.productMappings)) {
-      await updateProductMappings(serviceId, serviceData.productMappings, currentUser);
+      // Convert new structure to legacy structure for backward compatibility
+      const legacyMappings = serviceData.productMappings.map(m => ({
+        productId: m.productId,
+        productName: m.productName,
+        minimumCost: (m.percentage || 0) * 0.01 * 1000 // Rough estimate, can be improved
+      }));
+      await updateProductMappings(serviceId, legacyMappings, currentUser);
     }
     
     // Log activity

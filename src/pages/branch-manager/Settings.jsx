@@ -5,7 +5,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import { Card } from '../../components/ui/Card';
-import { Scissors, Package, FileText, Building2, ArrowRight, DollarSign, Image, Clock, Users } from 'lucide-react';
+import { Scissors, Package, FileText, Building2, ArrowRight, Banknote, Image, Clock, Users } from 'lucide-react';
 
 const Settings = () => {
   const navigate = useNavigate();

@@ -17,7 +17,7 @@ import {
   Download,
   Printer,
   Calendar,
-  DollarSign,
+  Banknote,
   Users,
   Package,
   TrendingUp,
@@ -565,7 +565,7 @@ const Reports = () => {
       <div className="flex gap-2 border-b border-gray-200">
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },
-          { id: 'revenue', label: 'Revenue', icon: DollarSign },
+          { id: 'revenue', label: 'Revenue', icon: Banknote },
           { id: 'transactions', label: 'Transactions', icon: Receipt },
           { id: 'appointments', label: 'Appointments', icon: Calendar },
           { id: 'inventory', label: 'Inventory', icon: Package },
@@ -675,7 +675,7 @@ const Reports = () => {
                     {summaryStats.avgTransactionValue > 0 && `Avg: ₱${summaryStats.avgTransactionValue.toFixed(2)}`}
                   </p>
                 </div>
-                <DollarSign className="h-12 w-12 text-green-600" />
+                <Banknote className="h-12 w-12 text-green-600" />
               </div>
             </Card>
 

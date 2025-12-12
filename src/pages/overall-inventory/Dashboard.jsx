@@ -9,7 +9,7 @@ import {
   Calendar,
   Building,
   TrendingUp,
-  DollarSign,
+  Banknote,
   RefreshCw
 } from 'lucide-react';
 import { ROUTES } from '../../utils/constants';
@@ -143,7 +143,7 @@ const OverallInventoryControllerDashboard = () => {
         
         <Card className="p-6">
           <div className="flex items-center">
-            <DollarSign className="h-8 w-8 text-purple-600" />
+            <Banknote className="h-8 w-8 text-purple-600" />
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Inventory Value</p>
               <p className="text-2xl font-bold text-gray-900">
@@ -263,6 +263,14 @@ const OverallInventoryControllerDashboard = () => {
 };
 
 export default OverallInventoryControllerDashboard;
+
+
+
+
+
+
+
+
 
 
 

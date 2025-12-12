@@ -13,7 +13,7 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  DollarSign,
+  Banknote,
   FileText,
   X,
   Package,
@@ -184,12 +184,14 @@ const Deliveries = () => {
   const handleOpenReceivingModal = (order) => {
     setSelectedOrder(order);
     // Initialize received quantities with ordered quantities
+    // Use index-based unique key to handle same product with different usage types
     const initialQuantities = {};
     const initialChecked = {};
     if (order.items && Array.isArray(order.items)) {
-      order.items.forEach(item => {
-        initialQuantities[item.productId] = item.quantity || 0;
-        initialChecked[item.productId] = false;
+      order.items.forEach((item, index) => {
+        const uniqueKey = `${item.productId}_${item.usageType || 'otc'}_${index}`;
+        initialQuantities[uniqueKey] = item.quantity || 0;
+        initialChecked[uniqueKey] = false;
       });
     }
     setReceivedQuantities(initialQuantities);
@@ -198,17 +200,26 @@ const Deliveries = () => {
     setIsReceivingModalOpen(true);
   };
 
+  // Get unique key for an item
+  const getItemKey = (item, index) => {
+    return `${item.productId}_${item.usageType || 'otc'}_${index}`;
+  };
+
   // Calculate discrepancy for an item
-  const calculateDiscrepancy = (item) => {
+  const calculateDiscrepancy = (item, index) => {
     const orderedQty = item.quantity || 0;
-    const receivedQty = receivedQuantities[item.productId] || 0;
+    const uniqueKey = getItemKey(item, index);
+    const receivedQty = receivedQuantities[uniqueKey] || 0;
     return receivedQty - orderedQty;
   };
 
   // Check if all items are checked
   const allItemsChecked = useMemo(() => {
     if (!selectedOrder || !selectedOrder.items) return false;
-    return selectedOrder.items.every(item => checkedItems[item.productId] === true);
+    return selectedOrder.items.every((item, index) => {
+      const uniqueKey = getItemKey(item, index);
+      return checkedItems[uniqueKey] === true;
+    });
   }, [selectedOrder, checkedItems]);
 
   // Handle receive delivery
@@ -235,20 +246,22 @@ const Deliveries = () => {
         branchId: userData.branchId,
         supplierId: selectedOrder.supplierId,
         supplierName: selectedOrder.supplierName,
-        items: selectedOrder.items.map(item => {
+        items: selectedOrder.items.map((item, index) => {
+          const uniqueKey = getItemKey(item, index);
           const orderedQty = item.quantity || 0;
-          const receivedQty = receivedQuantities[item.productId] || 0;
+          const receivedQty = receivedQuantities[uniqueKey] || 0;
           const discrepancy = receivedQty - orderedQty;
           
           return {
             productId: item.productId,
             productName: item.productName,
             sku: item.sku || null,
+            usageType: item.usageType || 'otc',
             orderedQuantity: orderedQty,
             receivedQuantity: receivedQty,
             discrepancy: discrepancy,
             unitPrice: item.unitPrice || 0,
-            checked: checkedItems[item.productId] || false
+            checked: checkedItems[uniqueKey] || false
           };
         }),
         notes: receivingNotes.trim(),
@@ -276,6 +289,21 @@ const Deliveries = () => {
       });
 
       // Store delivery data for batch creation
+      // Use unique keys to get received quantities
+      const deliveryItems = selectedOrder.items.map((item, index) => {
+        const uniqueKey = getItemKey(item, index);
+        const orderedQty = item.quantity || 0;
+        const receivedQty = receivedQuantities[uniqueKey] || 0;
+        return {
+          productId: item.productId,
+          productName: item.productName,
+          sku: item.sku || null,
+          usageType: item.usageType || 'otc',
+          quantity: receivedQty,
+          unitPrice: item.unitPrice || 0
+        };
+      }).filter(item => item.quantity > 0); // Only include items with received quantity > 0
+
       setReceivedDeliveryData({
         purchaseOrderId: selectedOrder.orderId || selectedOrder.id,
         purchaseOrderDocId: selectedOrder.id,
@@ -286,6 +314,7 @@ const Deliveries = () => {
         receivedByName: (userData.firstName && userData.lastName 
           ? `${userData.firstName} ${userData.lastName}`.trim() 
           : (userData.email || 'Unknown')),
+<<<<<<< HEAD
         items: selectedOrder.items.map(item => {
           const orderedQty = item.quantity || 0;
           const receivedQty = receivedQuantities[item.productId] || 0;
@@ -297,6 +326,9 @@ const Deliveries = () => {
             unitPrice: item.unitPrice || 0
           };
         }).filter(item => item.quantity > 0), // Only include items with received quantity > 0
+=======
+        items: deliveryItems,
+>>>>>>> 7713a9f67f1c6565bd01262aaa6791d868a6e940
         receivedAt: new Date()
       });
 
@@ -312,14 +344,17 @@ const Deliveries = () => {
       setError(null);
       
       // Open batch expiration modal
+      // Use unique keys to initialize expiration dates
       const initialExpirationDates = {};
-      selectedOrder.items.forEach(item => {
-        const receivedQty = receivedQuantities[item.productId] || 0;
+      selectedOrder.items.forEach((item, index) => {
+        const uniqueKey = getItemKey(item, index);
+        const receivedQty = receivedQuantities[uniqueKey] || 0;
         if (receivedQty > 0) {
           // Set default expiration to 1 year from today
           const defaultExpiration = new Date();
           defaultExpiration.setFullYear(defaultExpiration.getFullYear() + 1);
-          initialExpirationDates[item.productId] = defaultExpiration.toISOString().split('T')[0];
+          // Use unique key for expiration dates too
+          initialExpirationDates[uniqueKey] = defaultExpiration.toISOString().split('T')[0];
         }
       });
       setBatchExpirationDates(initialExpirationDates);
@@ -569,7 +604,7 @@ const Deliveries = () => {
           
           <Card className="p-4">
             <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-green-600" />
+              <Banknote className="h-8 w-8 text-green-600" />
               <div className="ml-3">
                 <p className="text-sm font-medium text-gray-600">Total Value</p>
                 <p className="text-xl font-bold text-gray-900">₱{deliveryStats.totalValue.toLocaleString()}</p>
@@ -996,6 +1031,7 @@ const Deliveries = () => {
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Usage Type</th>
                           <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Ordered Qty</th>
                           <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Received Qty</th>
                           <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Discrepancy</th>
@@ -1005,23 +1041,25 @@ const Deliveries = () => {
                       <tbody className="divide-y divide-gray-200">
                         {selectedOrder.items && selectedOrder.items.length > 0 ? (
                           selectedOrder.items.map((item, index) => {
-                            const discrepancy = calculateDiscrepancy(item);
+                            const uniqueKey = getItemKey(item, index);
+                            const discrepancy = calculateDiscrepancy(item, index);
                             const discrepancyClass = discrepancy > 0 ? 'text-green-600 font-semibold' : discrepancy < 0 ? 'text-red-600 font-semibold' : 'text-gray-600';
                             const discrepancyText = discrepancy > 0 ? `+${discrepancy}` : discrepancy.toString();
+                            const usageType = item.usageType || 'otc';
                             
                             return (
-                              <tr key={item.productId || index} className={checkedItems[item.productId] ? 'bg-green-50' : 'hover:bg-gray-50'}>
+                              <tr key={uniqueKey} className={checkedItems[uniqueKey] ? 'bg-green-50' : 'hover:bg-gray-50'}>
                                 <td className="px-4 py-3">
                                   <button
                                     onClick={() => {
                                       setCheckedItems(prev => ({
                                         ...prev,
-                                        [item.productId]: !prev[item.productId]
+                                        [uniqueKey]: !prev[uniqueKey]
                                       }));
                                     }}
                                     className="flex items-center justify-center"
                                   >
-                                    {checkedItems[item.productId] ? (
+                                    {checkedItems[uniqueKey] ? (
                                       <CheckSquare className="h-5 w-5 text-green-600" />
                                     ) : (
                                       <Square className="h-5 w-5 text-gray-400" />
@@ -1035,18 +1073,27 @@ const Deliveries = () => {
                                   <div className="text-sm text-gray-500">{item.sku || 'N/A'}</div>
                                 </td>
                                 <td className="px-4 py-3 text-center">
+                                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                    usageType === 'salon-use' 
+                                      ? 'bg-blue-100 text-blue-800' 
+                                      : 'bg-green-100 text-green-800'
+                                  }`}>
+                                    {usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-center">
                                   <div className="text-gray-900 font-medium">{item.quantity || 0}</div>
                                 </td>
                                 <td className="px-4 py-3">
                                   <Input
                                     type="number"
                                     min="0"
-                                    value={receivedQuantities[item.productId] || 0}
+                                    value={receivedQuantities[uniqueKey] || 0}
                                     onChange={(e) => {
                                       const value = parseInt(e.target.value) || 0;
                                       setReceivedQuantities(prev => ({
                                         ...prev,
-                                        [item.productId]: value
+                                        [uniqueKey]: value
                                       }));
                                     }}
                                     className="w-24 text-center"
@@ -1063,7 +1110,7 @@ const Deliveries = () => {
                           })
                         ) : (
                           <tr>
-                            <td colSpan="7" className="px-4 py-4 text-center text-gray-500">No items</td>
+                            <td colSpan="8" className="px-4 py-4 text-center text-gray-500">No items</td>
                           </tr>
                         )}
                       </tbody>
@@ -1089,7 +1136,10 @@ const Deliveries = () => {
                     <div>
                       <p className="text-sm font-medium text-gray-600">Items Checked</p>
                       <p className="text-lg font-bold text-gray-900">
-                        {Object.values(checkedItems).filter(Boolean).length} / {selectedOrder.items?.length || 0}
+                        {selectedOrder.items ? selectedOrder.items.filter((item, index) => {
+                          const uniqueKey = getItemKey(item, index);
+                          return checkedItems[uniqueKey] === true;
+                        }).length : 0} / {selectedOrder.items?.length || 0}
                       </p>
                     </div>
                     {!allItemsChecked && (
@@ -1216,44 +1266,58 @@ const Deliveries = () => {
                       <thead className="bg-gray-50">
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Usage Type</th>
                           <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Quantity</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expiration Date</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
                         {receivedDeliveryData.items && receivedDeliveryData.items.length > 0 ? (
-                          receivedDeliveryData.items.map((item, index) => (
-                            <tr key={item.productId || index} className="hover:bg-gray-50">
-                              <td className="px-4 py-3">
-                                <div className="font-medium text-gray-900">{item.productName}</div>
-                              </td>
-                              <td className="px-4 py-3 text-center">
-                                <div className="text-gray-900 font-medium">{item.quantity}</div>
-                              </td>
-                              <td className="px-4 py-3">
-                                <Input
-                                  type="date"
-                                  value={batchExpirationDates[item.productId] || ''}
-                                  onChange={(e) => {
-                                    setBatchExpirationDates(prev => ({
-                                      ...prev,
-                                      [item.productId]: e.target.value
-                                    }));
-                                  }}
-                                  className="w-full"
-                                  min={new Date().toISOString().split('T')[0]}
-                                />
-                                {batchExpirationDates[item.productId] && (
-                                  <p className="text-xs text-gray-500 mt-1">
-                                    {format(new Date(batchExpirationDates[item.productId]), 'MMM dd, yyyy')}
-                                  </p>
-                                )}
-                              </td>
-                            </tr>
-                          ))
+                          receivedDeliveryData.items.map((item, index) => {
+                            // Create unique key for this item (same format as in receiving modal)
+                            const uniqueKey = `${item.productId}_${item.usageType || 'otc'}_${index}`;
+                            return (
+                              <tr key={uniqueKey} className="hover:bg-gray-50">
+                                <td className="px-4 py-3">
+                                  <div className="font-medium text-gray-900">{item.productName}</div>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                                    (item.usageType || 'otc') === 'salon-use' 
+                                      ? 'bg-blue-100 text-blue-800 border border-blue-200' 
+                                      : 'bg-green-100 text-green-800 border border-green-200'
+                                  }`}>
+                                    {(item.usageType || 'otc') === 'salon-use' ? 'Salon Use' : 'OTC'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <div className="text-gray-900 font-medium">{item.quantity}</div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <Input
+                                    type="date"
+                                    value={batchExpirationDates[uniqueKey] || ''}
+                                    onChange={(e) => {
+                                      setBatchExpirationDates(prev => ({
+                                        ...prev,
+                                        [uniqueKey]: e.target.value
+                                      }));
+                                    }}
+                                    className="w-full"
+                                    min={new Date().toISOString().split('T')[0]}
+                                  />
+                                  {batchExpirationDates[uniqueKey] && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                      {format(new Date(batchExpirationDates[uniqueKey]), 'MMM dd, yyyy')}
+                                    </p>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
                         ) : (
                           <tr>
-                            <td colSpan="3" className="px-4 py-4 text-center text-gray-500">No items</td>
+                            <td colSpan="4" className="px-4 py-4 text-center text-gray-500">No items</td>
                           </tr>
                         )}
                       </tbody>
@@ -1289,10 +1353,14 @@ const Deliveries = () => {
                       setError(null);
 
                       // Prepare items with expiration dates
-                      const itemsWithExpiration = receivedDeliveryData.items.map(item => ({
-                        ...item,
-                        expirationDate: batchExpirationDates[item.productId] || null
-                      }));
+                      // Use unique keys to get expiration dates
+                      const itemsWithExpiration = receivedDeliveryData.items.map((item, index) => {
+                        const uniqueKey = `${item.productId}_${item.usageType || 'otc'}_${index}`;
+                        return {
+                          ...item,
+                          expirationDate: batchExpirationDates[uniqueKey] || null
+                        };
+                      });
 
                       // Create batches
                       const deliveryData = {

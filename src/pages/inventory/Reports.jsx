@@ -32,7 +32,7 @@ import {
   Printer,
   Image as ImageIcon,
   TrendingUp,
-  DollarSign,
+  Banknote,
   Users,
   Truck,
   ArrowRightLeft,
@@ -281,7 +281,7 @@ const Reports = () => {
       case 'Inventory': return <Package className="h-5 w-5" />;
       case 'Movement': return <ArrowRightLeft className="h-5 w-5" />;
       case 'Supplier': return <Truck className="h-5 w-5" />;
-      case 'Financial': return <DollarSign className="h-5 w-5" />;
+      case 'Financial': return <Banknote className="h-5 w-5" />;
       case 'Expiry': return <Calendar className="h-5 w-5" />;
       default: return <FileText className="h-5 w-5" />;
     }

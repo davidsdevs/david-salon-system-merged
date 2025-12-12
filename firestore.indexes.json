@@ -154,6 +154,14 @@
       "collectionGroup": "activity_logs",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "branchId", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "activity_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "targetId", "order": "ASCENDING" },
         { "fieldPath": "targetType", "order": "ASCENDING" },
         { "fieldPath": "timestamp", "order": "DESCENDING" }

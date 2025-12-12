@@ -8,7 +8,7 @@ import { Input } from '../../components/ui/Input';
 import { SearchInput } from '../../components/ui/SearchInput';
 import Modal from '../../components/ui/Modal';
 import { 
-  DollarSign,
+  Banknote,
   Search,
   Filter,
   Eye,
@@ -352,7 +352,7 @@ const CostAnalysis = () => {
           
           <Card className="p-4">
             <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-red-600" />
+              <Banknote className="h-8 w-8 text-red-600" />
               <div className="ml-3">
                 <p className="text-sm font-medium text-gray-600">Total Cost</p>
                 <p className="text-xl font-bold text-gray-900">₱{summaryStats.totalCost.toLocaleString()}</p>
@@ -555,7 +555,7 @@ const CostAnalysis = () => {
         {/* Empty State */}
         {filteredData.length === 0 && (
           <Card className="p-12 text-center">
-            <DollarSign className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+            <Banknote className="h-16 w-16 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">No Analysis Data Found</h3>
             <p className="text-gray-600 mb-4">
               {searchTerm || Object.values(filters).some(f => f !== 'all' && f !== '')

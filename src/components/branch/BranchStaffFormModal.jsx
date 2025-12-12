@@ -23,7 +23,7 @@ const BranchStaffFormModal = ({ staff, branchId, branchName, onClose, onSave }) 
     phone: '',
     roles: [USER_ROLES.RECEPTIONIST], // Changed to array
     branchId: branchId,
-    password: ''
+    rolePasswords: {} // Object to store password for each role: { role: password }
   });
 
   const STAFF_ROLES = [
@@ -45,7 +45,7 @@ const BranchStaffFormModal = ({ staff, branchId, branchName, onClose, onSave }) 
         phone: staff.phone || '',
         roles: staffRoles.length > 0 ? staffRoles : [USER_ROLES.RECEPTIONIST],
         branchId: branchId,
-        password: ''
+        rolePasswords: {}
       });
     }
   }, [staff, branchId]);
@@ -62,6 +62,7 @@ const BranchStaffFormModal = ({ staff, branchId, branchName, onClose, onSave }) 
   const handleRoleToggle = (role) => {
     setFormData(prev => {
       const currentRoles = prev.roles || [];
+      const rolePasswords = prev.rolePasswords || {};
       
       // Toggle the role
       if (currentRoles.includes(role)) {
@@ -70,22 +71,67 @@ const BranchStaffFormModal = ({ staff, branchId, branchName, onClose, onSave }) 
           toast.error('Staff must have at least one role');
           return prev;
         }
-        return { ...prev, roles: currentRoles.filter(r => r !== role) };
+        // Remove role and its password
+        const newRolePasswords = { ...rolePasswords };
+        delete newRolePasswords[role];
+        return { 
+          ...prev, 
+          roles: currentRoles.filter(r => r !== role),
+          rolePasswords: newRolePasswords
+        };
       } else {
         return { ...prev, roles: [...currentRoles, role] };
       }
     });
   };
 
+  // Handle password change for a specific role
+  const handleRolePasswordChange = (role, password) => {
+    setFormData(prev => ({
+      ...prev,
+      rolePasswords: {
+        ...prev.rolePasswords,
+        [role]: password
+      }
+    }));
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    // Validate passwords if provided
+    if (!staff) {
+      for (const role of formData.roles) {
+        const password = formData.rolePasswords?.[role];
+        if (password && password.length > 0) {
+          if (password.length < 8) {
+            toast.error(`${ROLE_LABELS[role]} password must be at least 8 characters`);
+            return;
+          }
+          if (!/\d/.test(password)) {
+            toast.error(`${ROLE_LABELS[role]} password must contain at least one number`);
+            return;
+          }
+          if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) {
+            toast.error(`${ROLE_LABELS[role]} password must contain at least one special character`);
+            return;
+          }
+        }
+      }
+    }
+    
     setLoading(true);
 
     try {
       if (staff) {
         await updateUser(staff.id, formData, currentUser);
       } else {
-        await createUser(formData, currentUser);
+        // Prepare userData with rolePasswords
+        const userData = {
+          ...formData,
+          rolePasswords: formData.rolePasswords || {}
+        };
+        await createUser(userData, currentUser);
       }
       onSave();
     } catch (error) {
@@ -267,24 +313,27 @@ const BranchStaffFormModal = ({ staff, branchId, branchName, onClose, onSave }) 
           {!staff && (
             <div>
               <h3 className="text-sm font-semibold text-gray-900 mb-3 pb-2 border-b border-gray-200">
-                Security
+                Security - Temporary Passwords
               </h3>
-              <div>
-                <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                  Temporary Password
-                </label>
-                <input
-                  type="password"
-                  id="password"
-                  name="password"
-                  value={formData.password}
-                  onChange={handleChange}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  placeholder="Min 8 characters"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Leave empty for default password (DefaultPass123!)
-                </p>
+              <p className="text-xs text-gray-600 mb-4">
+                Set a temporary password for each role. Leave empty to use default password (DefaultPass123!)
+              </p>
+              <div className="space-y-3">
+                {formData.roles.map(role => (
+                  <div key={role}>
+                    <label htmlFor={`password-${role}`} className="block text-sm font-medium text-gray-700 mb-2">
+                      {ROLE_LABELS[role]} Password
+                    </label>
+                    <input
+                      type="password"
+                      id={`password-${role}`}
+                      value={formData.rolePasswords?.[role] || ''}
+                      onChange={(e) => handleRolePasswordChange(role, e.target.value)}
+                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                      placeholder={`Min 8 characters (default: DefaultPass123!)`}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
           )}

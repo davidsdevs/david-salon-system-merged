@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ArrowLeft, Package, Filter, Eye, Image as ImageIcon, Plus, Trash2, X, ChevronLeft, ChevronRight, Printer, Download, FileText, Palette, Sparkles, Grid3x3, Columns, Rows, Minus, Save, Edit2, Upload, Eye as EyeIcon } from 'lucide-react';
+import { Search, ArrowLeft, Package, Filter, Eye, Image as ImageIcon, Plus, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Printer, Download, FileText, Palette, Sparkles, Grid3x3, Columns, Rows, Minus, Save, Edit2, Upload, Eye as EyeIcon } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Card } from '../../components/ui/Card';
 import { Input } from '../../components/ui/Input';
@@ -133,6 +133,7 @@ const BranchProducts = () => {
   const [catalogData, setCatalogData] = useState(null); // Stores ordered brands and products with icons
   const [savingCatalog, setSavingCatalog] = useState(false);
   const [gridLayout, setGridLayout] = useState(null); // Stores grid positions: { brandId: { row, col } }
+  const [showAdvancedLayout, setShowAdvancedLayout] = useState(false); // Collapsible section for advanced layout controls
   
   // Drag and drop sensors
   const sensors = useSensors(
@@ -1688,58 +1689,18 @@ const BranchProducts = () => {
             </div>
 
             {/* Catalog Controls */}
-            <div className="p-6 border-b border-gray-200">
-              {isEditMode && (
-                <div className="mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Grid3x3 className="w-5 h-5 text-gray-600" />
-                      <h3 className="font-semibold text-gray-900">Grid Layout</h3>
-                    </div>
-                    <div className="flex items-center gap-4 text-sm text-gray-600">
-                      <span>Columns: {catalogStyle.gridColumns || 2}</span>
-                      {gridLayout && catalogData && (
-                        <span>Rows: {Math.max(...Object.values(gridLayout).map(pos => pos.row), -1) + 1 || 1}</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleAddColumn}
-                      className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <Columns className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={handleRemoveColumn}
-                      disabled={(catalogStyle.gridColumns || 2) <= 1}
-                      className="flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                    >
-                      <Minus className="w-4 h-4" />
-                      <Columns className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={handleAddRow}
-                      className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <Rows className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              )}
-              
+            <div className="p-6 border-b border-gray-200 space-y-6">
+              {/* Main Quick Settings */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <Palette className="inline h-4 w-4 mr-1" />
+                    <Palette className="inline h-4 w-4 mr-1.5 text-gray-500" />
                     Color Theme
                   </label>
                   <select
                     value={catalogStyle.theme}
                     onChange={(e) => setCatalogStyle({ ...catalogStyle, theme: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53] text-sm"
                   >
                     <option value="elegant">Elegant (Purple)</option>
                     <option value="modern">Modern (Blue)</option>
@@ -1748,26 +1709,26 @@ const BranchProducts = () => {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <FileText className="inline h-4 w-4 mr-1" />
+                    <FileText className="inline h-4 w-4 mr-1.5 text-gray-500" />
                     Font Size
                   </label>
                   <select
                     value={catalogStyle.fontSize}
                     onChange={(e) => setCatalogStyle({ ...catalogStyle, fontSize: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53]"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53] text-sm"
                   >
                     <option value="small">Small</option>
                     <option value="medium">Medium</option>
                     <option value="large">Large</option>
                   </select>
                 </div>
-                <div className="space-y-2">
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <Sparkles className="inline h-4 w-4 mr-1" />
+                    <Sparkles className="inline h-4 w-4 mr-1.5 text-gray-500" />
                     Display Options
                   </label>
-                  <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-sm">
+                  <div className="space-y-2 pt-1">
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
                       <input
                         type="checkbox"
                         checked={catalogStyle.showDescriptions}
@@ -1776,7 +1737,7 @@ const BranchProducts = () => {
                       />
                       <span>Show Descriptions</span>
                     </label>
-                    <label className="flex items-center gap-2 text-sm">
+                    <label className="flex items-center gap-2 text-sm text-gray-700">
                       <input
                         type="checkbox"
                         checked={catalogStyle.showPrice}
@@ -1789,48 +1750,107 @@ const BranchProducts = () => {
                 </div>
               </div>
 
-              <div className="flex gap-3 mt-6">
-                {isEditMode && (
-                  <Button
-                    onClick={handleSaveCatalog}
-                    disabled={savingCatalog}
-                    className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+              {/* Advanced Layout Controls - Collapsible */}
+              {isEditMode && (
+                <div className="border border-gray-200 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setShowAdvancedLayout(!showAdvancedLayout)}
+                    className="w-full px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors flex items-center justify-between text-left"
                   >
-                    <Save className="h-4 w-4" />
-                    {savingCatalog ? 'Saving...' : 'Save Configuration'}
+                    <div className="flex items-center gap-2">
+                      <Grid3x3 className="w-4 h-4 text-gray-600" />
+                      <span className="font-medium text-gray-900">Advanced Layout Options</span>
+                      <span className="text-xs text-gray-500 ml-2">
+                        ({catalogStyle.gridColumns || 2} columns
+                        {gridLayout && catalogData && `, ${Math.max(...Object.values(gridLayout).map(pos => pos.row), -1) + 1 || 1} rows`})
+                      </span>
+                    </div>
+                    {showAdvancedLayout ? (
+                      <ChevronUp className="w-4 h-4 text-gray-500" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-gray-500" />
+                    )}
+                  </button>
+                  {showAdvancedLayout && (
+                    <div className="p-4 bg-white border-t border-gray-200">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm text-gray-600 font-medium">Grid Columns:</span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleRemoveColumn}
+                            disabled={(catalogStyle.gridColumns || 2) <= 1}
+                            className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Remove Column"
+                          >
+                            <Minus className="w-4 h-4 text-gray-700" />
+                          </button>
+                          <span className="text-sm font-semibold text-gray-900 w-8 text-center">
+                            {catalogStyle.gridColumns || 2}
+                          </span>
+                          <button
+                            onClick={handleAddColumn}
+                            className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                            title="Add Column"
+                          >
+                            <Plus className="w-4 h-4 text-gray-700" />
+                          </button>
+                        </div>
+                        <span className="text-xs text-gray-500 ml-auto">
+                          Tip: Drag and drop brands to reorder them
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-100">
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => setIsEditMode(!isEditMode)}
+                    className="flex items-center gap-2"
+                    variant={isEditMode ? "default" : "outline"}
+                  >
+                    {isEditMode ? <EyeIcon className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
+                    {isEditMode ? 'View Mode' : 'Edit Mode'}
                   </Button>
-                )}
-                <Button
-                  onClick={() => setIsEditMode(!isEditMode)}
-                  className="flex items-center gap-2"
-                  variant="outline"
-                >
-                  {isEditMode ? <EyeIcon className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
-                  {isEditMode ? 'View Mode' : 'Edit Mode'}
-                </Button>
-                <Button
-                  onClick={handlePrintPreview}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <EyeIcon className="h-4 w-4" />
-                  Print Preview
-                </Button>
-                <Button
-                  onClick={handlePrint}
-                  className="flex items-center gap-2 bg-[#160B53] hover:bg-[#1a0f6b]"
-                >
-                  <Printer className="h-4 w-4" />
-                  Print Catalog
-                </Button>
-                <Button
-                  onClick={handleDownloadPDF}
-                  variant="outline"
-                  className="flex items-center gap-2"
-                >
-                  <Download className="h-4 w-4" />
-                  Download PDF
-                </Button>
+                  {isEditMode && (
+                    <Button
+                      onClick={handleSaveCatalog}
+                      disabled={savingCatalog}
+                      className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
+                    >
+                      <Save className="h-4 w-4" />
+                      {savingCatalog ? 'Saving...' : 'Save'}
+                    </Button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 ml-auto">
+                  <Button
+                    onClick={handlePrintPreview}
+                    variant="outline"
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <EyeIcon className="h-4 w-4" />
+                    Preview
+                  </Button>
+                  <Button
+                    onClick={handleDownloadPDF}
+                    variant="outline"
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download PDF
+                  </Button>
+                  <Button
+                    onClick={handlePrint}
+                    className="flex items-center gap-2 bg-[#160B53] hover:bg-[#1a0f6b] text-sm"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Print
+                  </Button>
+                </div>
               </div>
             </div>
 

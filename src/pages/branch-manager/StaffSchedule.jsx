@@ -3,8 +3,8 @@
  * Weekly view of staff shifts
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Clock, Users, ArrowRight, Edit, Plus, X, History } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Calendar, ChevronLeft, ChevronRight, Clock, Users, ArrowRight, Edit, Plus, X, History, Printer } from 'lucide-react';
 import { getUsersByBranch, getUserById } from '../../services/userService';
 import { getLendingRequests, getActiveLending, getActiveLendingFromBranch, getActiveLendingForBranch } from '../../services/stylistLendingService';
 import { getLeaveRequestsByBranch } from '../../services/leaveManagementService';
@@ -76,6 +76,12 @@ const StaffSchedule = () => {
     return new Date(date.setDate(diff));
   });
 
+  // Print ref
+  const printRef = useRef();
+  
+  // Branch info for print
+  const [branchInfo, setBranchInfo] = useState(null);
+
   const MANAGEABLE_ROLES = [
     USER_ROLES.RECEPTIONIST,
     USER_ROLES.STYLIST,
@@ -111,6 +117,7 @@ const StaffSchedule = () => {
       if (userBranch) {
         const branch = await getBranchById(userBranch);
         setBranchHours(branch?.operatingHours || null);
+        setBranchInfo(branch); // Store branch info for printing
       }
     } catch (error) {
       console.error('Error fetching branch hours:', error);
@@ -125,7 +132,7 @@ const StaffSchedule = () => {
         setAllScheduleConfigs(configs);
       }
     } catch (error) {
-      console.error('Error fetching schedule configurations:', error);
+      console.error('[fetchAllScheduleConfigs] Error fetching schedule configurations:', error);
     }
   };
 
@@ -135,7 +142,7 @@ const StaffSchedule = () => {
         const leaves = await getLeaveRequestsByBranch(userBranch);
         setLeaveRequests(leaves);
 
-        console.log('Fetched leave requests:', leaves.length, leaves);
+        // Fetched leave requests
 
         // Create a map of staff leaves for quick lookup
         const leaveMap = {};
@@ -184,19 +191,11 @@ const StaffSchedule = () => {
               reason: leave.reason
             });
             
-            console.log(`Added leave to map for employee ${employeeId}:`, {
-              startDate: startDate.toISOString(),
-              endDate: endDate.toISOString(),
-              type: leave.type,
-              status: leave.status
-            });
+            // Added leave to map
           }
         });
         
-        console.log('Staff leave map created:', {
-          employeeIds: Object.keys(leaveMap),
-          leaveCounts: Object.keys(leaveMap).map(id => ({ id, count: leaveMap[id].length }))
-        });
+        // Staff leave map created
         setStaffLeaveMap(leaveMap);
       }
     } catch (error) {
@@ -265,25 +264,21 @@ const StaffSchedule = () => {
       const weekStart = new Date(currentWeek);
       weekStart.setHours(0, 0, 0, 0);
       
+      
       // Load schedules for each staff member and merge with staff data
       const staffWithSchedules = await Promise.all(
         manageableStaff.map(async (member) => {
           const memberId = member.id || member.uid;
-          if (!memberId) return member;
+          if (!memberId) {
+            // Member has no ID or UID, skipping schedule lookup
+            return member;
+          }
           
           try {
             // Get active schedule configuration, inactive configs, and date-specific shifts
             // Try both member.id and member.uid in case they're stored differently
             const { activeConfig, inactiveConfigs, dateSpecificShifts: dateSpecificShiftsList } = await getActiveSchedulesByEmployee(memberId, userBranch, weekStart);
             
-            // Debug: Log member info
-            console.log(`Fetching schedule for member:`, {
-              memberId,
-              memberUid: member.uid,
-              memberIdField: member.id,
-              name: getFullName(member),
-              activeConfigFound: !!activeConfig
-            });
             
             // Note: We no longer pre-populate member.shifts here
             // The getShiftForDay function will find the correct schedule for each date
@@ -309,15 +304,6 @@ const StaffSchedule = () => {
               });
             }
             
-            // Debug: Log if shifts are found
-            if (activeConfig && Object.keys(shifts).length === 0) {
-              console.log(`No shifts found for employee ${memberId} in active config:`, {
-                activeConfigId: activeConfig.id,
-                hasShifts: !!activeConfig.shifts,
-                employeeShifts: activeConfig.employeeShifts,
-                allEmployeeIds: activeConfig.shifts ? Object.keys(activeConfig.shifts) : []
-              });
-            }
             
             // Convert date-specific shifts to dateSpecificShifts format
             const dateSpecificShifts = {}; // Store by date string for easy lookup
@@ -494,11 +480,7 @@ const StaffSchedule = () => {
         )
       );
       
-      console.log('Fetched lending data:', {
-        activeLendingsFromBranch: activeLendingsFromBranch.length,
-        lentOutMapCount: Object.keys(lentOutMap).length,
-        lentOutMap
-      });
+      // Fetched lending data
       
       setLendingData(lendingMap);
       setLentOutData(lentOutMap);
@@ -583,22 +565,84 @@ const StaffSchedule = () => {
     // Note: We check ALL configs (both active and inactive) - the isActive flag doesn't matter for date-based lookup
     if (date && allScheduleConfigs.length > 0) {
       const configForDate = getScheduleForDate(allScheduleConfigs, date);
+      
+      // Config found for date-based lookup
+      
       if (configForDate && configForDate.shifts) {
-        const memberId = member.id || member.uid;
-        if (memberId && configForDate.shifts[memberId]) {
-          const employeeShifts = configForDate.shifts[memberId];
-          if (employeeShifts[dayKey] && employeeShifts[dayKey].start && employeeShifts[dayKey].end) {
-            // Always mark as active when found via date-based lookup
-            // The isActive flag on the config is just for marking "current" config, not for historical/future dates
-            return {
-              start: employeeShifts[dayKey].start,
-              end: employeeShifts[dayKey].end,
-              isRecurring: true,
-              isActive: true, // Always true when found via date-based lookup
-              configId: configForDate.id,
-              startDate: configForDate.startDate
-            };
+        // Collect ALL possible ID variations for this staff member
+        const possibleIds = [];
+        if (member.id) possibleIds.push(member.id);
+        if (member.uid && member.uid !== member.id) possibleIds.push(member.uid);
+        // Also check if there's a user document ID stored differently
+        if (member.userId && !possibleIds.includes(member.userId)) possibleIds.push(member.userId);
+        
+        // Remove duplicates and empty values
+        const uniqueIds = [...new Set(possibleIds.filter(id => id))];
+        const memberId = uniqueIds[0] || member.id || member.uid;
+        
+        // Looking for shifts for member
+        
+        // Try to find shifts using any of the possible IDs
+        let employeeShifts = null;
+        let matchedId = null;
+        
+        for (const id of uniqueIds) {
+          if (id && configForDate.shifts[id]) {
+            employeeShifts = configForDate.shifts[id];
+            matchedId = id;
+            // Found direct ID match
+            break;
           }
+        }
+        
+        // If no direct match, try partial matching (check if IDs contain each other)
+        if (!employeeShifts) {
+          const availableIds = Object.keys(configForDate.shifts);
+          // No direct match found, trying partial matching
+          
+          for (const id of uniqueIds) {
+            if (!id) continue;
+            
+            // Try exact reverse match
+            const reverseMatch = availableIds.find(availId => 
+              availId === id || 
+              availId === String(id) ||
+              String(availId) === id
+            );
+            if (reverseMatch) {
+              employeeShifts = configForDate.shifts[reverseMatch];
+              matchedId = reverseMatch;
+              // Found exact reverse match
+              break;
+            }
+            
+            // Try substring matching (if one contains the other)
+            const substringMatch = availableIds.find(availId => 
+              (typeof availId === 'string' && typeof id === 'string') &&
+              (availId.includes(id) || id.includes(availId))
+            );
+            if (substringMatch) {
+              employeeShifts = configForDate.shifts[substringMatch];
+              matchedId = substringMatch;
+              // Found substring match
+              break;
+            }
+          }
+        }
+        
+        if (employeeShifts && employeeShifts[dayKey] && employeeShifts[dayKey].start && employeeShifts[dayKey].end) {
+          // Always mark as active when found via date-based lookup
+          // The isActive flag on the config is just for marking "current" config, not for historical/future dates
+          // Shift found
+          
+          return {
+            start: employeeShifts[dayKey].start,
+            end: employeeShifts[dayKey].end,
+            isRecurring: true,
+            isActive: true, // Always true when found via date-based lookup
+            configId: configForDate.id,
+            startDate: configForDate.startDate
+          };
         }
       }
     }
@@ -683,16 +727,7 @@ const StaffSchedule = () => {
       
       const result = checkTime >= startTime && checkTime <= endTime;
       
-      // Debug logging (only log when match found to avoid spam)
-      if (result) {
-        console.log(`✓ Staff ${memberId} is on leave on ${checkDate.toISOString().split('T')[0]}:`, {
-          checkDate: checkDate.toISOString(),
-          startDate: startDate.toISOString(),
-          endDate: endDate.toISOString(),
-          leaveType: leave.type,
-          status: leave.status
-        });
-      }
+      // Staff is on leave
       
       return result;
     });
@@ -1421,11 +1456,136 @@ const StaffSchedule = () => {
     return today >= weekStart && today <= weekEnd;
   }, [currentWeek]);
 
+  // Print handler using window.open method
+  const handlePrintSchedule = () => {
+    if (!printRef.current) {
+      toast.error('Print content not ready. Please try again.');
+      return;
+    }
+
+    // Wait a moment to ensure content is fully rendered
+    setTimeout(() => {
+      if (!printRef.current) {
+        toast.error('Print content not ready. Please try again.');
+        return;
+      }
+
+      // Get the inner HTML of the print content (includes inline styles)
+      const printContentHTML = printRef.current.innerHTML;
+      
+      // Get all computed styles from the document
+      let styles = '';
+      try {
+        styles = Array.from(document.styleSheets)
+          .map((sheet) => {
+            try {
+              return Array.from(sheet.cssRules || [])
+                .map((rule) => rule.cssText)
+                .join('\n');
+            } catch (e) {
+              // Cross-origin stylesheets will throw an error, skip them
+              return '';
+            }
+          })
+          .join('\n');
+      } catch (e) {
+        console.warn('Could not extract all styles:', e);
+      }
+
+      // Create print window
+      const printWindow = window.open('', '_blank', 'width=1200,height=800');
+      if (!printWindow) {
+        toast.error('Please allow pop-ups to print the schedule');
+        return;
+      }
+
+      // Write HTML content
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Weekly Schedule - ${weekDates[0]?.toISOString().split('T')[0] || 'Schedule'}</title>
+          <meta charset="utf-8">
+          <style>
+            ${styles}
+            @media print {
+              @page {
+                size: letter landscape;
+                margin: 0.75in;
+              }
+              * {
+                color: #000 !important;
+                background: transparent !important;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+              body {
+                margin: 0;
+                padding: 0;
+              }
+            }
+            body {
+              font-family: Arial, sans-serif;
+              margin: 0;
+              padding: 20px;
+              background: white;
+              color: #000;
+            }
+            table {
+              border-collapse: collapse;
+              width: 100%;
+            }
+            th, td {
+              border: 1px solid #000;
+              padding: 10px 8px;
+            }
+            th {
+              font-weight: bold;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContentHTML}
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                // Close window after print dialog is closed
+                window.onafterprint = function() {
+                  setTimeout(function() {
+                    window.close();
+                  }, 100);
+                };
+                // Fallback: close after 30 seconds if print dialog doesn't trigger
+                setTimeout(function() {
+                  if (!window.closed) {
+                    window.close();
+                  }
+                }, 30000);
+              }, 500);
+            };
+          </script>
+        </body>
+        </html>
+      `);
+      
+      printWindow.document.close();
+    }, 100);
+  };
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
+      <>
+        <div className="flex items-center justify-center h-64">
+          <LoadingSpinner size="lg" />
+        </div>
+        {/* Always render print component even when loading */}
+        <div ref={printRef} style={{ position: 'fixed', left: '-200%', top: 0, width: '8.5in', zIndex: -1 }}>
+          <div className="print-content" style={{ fontFamily: 'Arial, sans-serif', color: '#000', background: '#fff', padding: '20px' }}>
+            <p>Loading schedule data...</p>
+          </div>
+        </div>
+      </>
     );
   }
 
@@ -1439,39 +1599,48 @@ const StaffSchedule = () => {
         </div>
         <div className="flex items-center gap-2">
           {!isEditMode ? (
-            <button
-              onClick={() => {
-                // Enter edit mode - initialize editable shifts with current shifts
-                const initialEditableShifts = {};
-                staff.forEach(member => {
-                  const memberId = member.id || member.uid;
-                  if (memberId) {
-                    initialEditableShifts[memberId] = {};
-                    DAYS_OF_WEEK.forEach(day => {
-                      const existingShift = member.shifts?.[day.key];
-                      if (existingShift) {
-                        initialEditableShifts[memberId][day.key] = {
-                          start: existingShift.start || '',
-                          end: existingShift.end || ''
-                        };
-                      }
-                    });
-                  }
-                });
-                setEditableShifts(initialEditableShifts);
-                
-                // Set start date to the current week being viewed
-                const weekStart = new Date(currentWeek);
-                weekStart.setHours(0, 0, 0, 0);
-                setConfigStartDate(weekStart.toISOString().split('T')[0]);
-                
-                setIsEditMode(true);
-              }}
-              className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Add Shift
-            </button>
+            <>
+              <button
+                onClick={handlePrintSchedule}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                <Printer className="w-4 h-4" />
+                Print Schedule
+              </button>
+              <button
+                onClick={() => {
+                  // Enter edit mode - initialize editable shifts with current shifts
+                  const initialEditableShifts = {};
+                  staff.forEach(member => {
+                    const memberId = member.id || member.uid;
+                    if (memberId) {
+                      initialEditableShifts[memberId] = {};
+                      DAYS_OF_WEEK.forEach(day => {
+                        const existingShift = member.shifts?.[day.key];
+                        if (existingShift) {
+                          initialEditableShifts[memberId][day.key] = {
+                            start: existingShift.start || '',
+                            end: existingShift.end || ''
+                          };
+                        }
+                      });
+                    }
+                  });
+                  setEditableShifts(initialEditableShifts);
+                  
+                  // Set start date to the current week being viewed
+                  const weekStart = new Date(currentWeek);
+                  weekStart.setHours(0, 0, 0, 0);
+                  setConfigStartDate(weekStart.toISOString().split('T')[0]);
+                  
+                  setIsEditMode(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Add Shift
+              </button>
+            </>
           ) : (
             <div className="flex items-center gap-2">
               <input
@@ -2697,6 +2866,172 @@ const StaffSchedule = () => {
           </div>
         </div>
       )}
+
+      {/* Hidden Print Component - Minimalist Black & White */}
+      <div ref={printRef} style={{ position: 'fixed', left: '-200%', top: 0, width: '8.5in', zIndex: -1 }}>
+        <style>{`
+          @media print {
+            @page {
+              size: letter landscape;
+              margin: 0.75in;
+            }
+            * {
+              color: #000 !important;
+              background: transparent !important;
+            }
+          }
+        `}</style>
+        <div className="print-content" style={{ 
+          fontFamily: 'Arial, sans-serif',
+          color: '#000',
+          background: '#fff',
+          padding: '20px'
+        }}>
+          {/* Header */}
+          <div style={{ 
+            textAlign: 'center',
+            marginBottom: '30px',
+            borderBottom: '2px solid #000',
+            paddingBottom: '15px'
+          }}>
+            <h1 style={{ 
+              fontSize: '24px',
+              fontWeight: 'bold',
+              marginBottom: '10px',
+              letterSpacing: '1px'
+            }}>
+              WEEKLY SCHEDULE
+            </h1>
+            <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>
+              {branchInfo?.branchName || branchInfo?.name || 'Branch'}
+            </div>
+            <div style={{ 
+              fontSize: '11px',
+              marginTop: '12px',
+              display: 'flex',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ textAlign: 'left' }}>
+                <div>Week: {weekDates[0]?.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - {weekDates[6]?.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                <div>Printed by: {currentUser ? getFullName(currentUser) : 'Manager'}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div>Printed: {new Date().toLocaleString('en-US', { 
+                  year: 'numeric', 
+                  month: 'short', 
+                  day: 'numeric', 
+                  hour: '2-digit', 
+                  minute: '2-digit' 
+                })}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Schedule Table */}
+          <table style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            border: '1px solid #000',
+            fontSize: '11px'
+          }}>
+            <thead>
+              <tr>
+                <th style={{
+                  border: '1px solid #000',
+                  padding: '10px 8px',
+                  textAlign: 'left',
+                  fontWeight: 'bold'
+                }}>
+                  STAFF
+                </th>
+                {weekDates.map((date, index) => {
+                  const dayName = DAYS_OF_WEEK[index]?.label || '';
+                  const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                  return (
+                    <th key={index} style={{
+                      border: '1px solid #000',
+                      padding: '10px 8px',
+                      textAlign: 'center',
+                      fontWeight: 'bold',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {dayName.toUpperCase()}<br />
+                      <span style={{ fontSize: '9px', fontWeight: 'normal' }}>{dateStr}</span>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {staff.map((member, idx) => {
+                const memberName = getFullName(member);
+                const memberId = member.id || member.uid;
+                
+                return (
+                  <tr key={memberId || idx} style={{
+                    pageBreakInside: 'avoid'
+                  }}>
+                    <td style={{
+                      border: '1px solid #000',
+                      padding: '10px 8px',
+                      textAlign: 'left',
+                      fontWeight: '600'
+                    }}>
+                      {memberName}
+                    </td>
+                    {weekDates.map((date, dateIdx) => {
+                      const dayKey = DAYS_OF_WEEK[dateIdx]?.key || '';
+                      
+                      // Use the same getShiftForDay function as the display view
+                      const shift = getShiftForDay(member, dayKey, date);
+                      
+                      let cellContent = '-';
+                      let cellStyle = {
+                        border: '1px solid #000',
+                        padding: '10px 8px',
+                        textAlign: 'center'
+                      };
+
+                      // Check for leave
+                      if (staffLeaveMap && isStaffOnLeave(memberId, date)) {
+                        const leaveInfo = getLeaveInfoForDate(memberId, date);
+                        const leaveTypeLabels = {
+                          vacation: 'Vacation',
+                          sick: 'Sick',
+                          personal: 'Personal',
+                          emergency: 'Emergency',
+                          maternity: 'Maternity',
+                          paternity: 'Paternity',
+                          bereavement: 'Bereavement'
+                        };
+                        const leaveType = leaveInfo?.type ? leaveTypeLabels[leaveInfo.type] || leaveInfo.type : '';
+                        cellContent = leaveType ? `ON LEAVE\n${leaveType}` : 'ON LEAVE';
+                        cellStyle = { ...cellStyle, fontStyle: 'italic', whiteSpace: 'pre-line' };
+                      } 
+                      // Check for lending (staff lent OUT from this branch)
+                      else if (shift?.isLending) {
+                        cellContent = 'LENT OUT';
+                        cellStyle = { ...cellStyle, fontStyle: 'italic' };
+                      }
+                      // Check if shift exists
+                      else if (shift && shift.start && shift.end) {
+                        cellContent = `${formatTime12Hour(shift.start)} - ${formatTime12Hour(shift.end)}`;
+                        cellStyle = { ...cellStyle, fontWeight: '600' };
+                      }
+
+                      return (
+                        <td key={dateIdx} style={cellStyle}>
+                          {cellContent}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 };

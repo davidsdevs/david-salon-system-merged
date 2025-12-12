@@ -1,7 +1,7 @@
 import Button from "../../../components/ui/Button"
 import { Card } from "../../../components/ui/Card"
 import { CTAButton, SecondaryButton } from "../../../components/ui/ConsistentButton"
-import { Clock, DollarSign, Filter } from "lucide-react"
+import { Clock, Banknote, Filter } from "lucide-react"
 import { useParams, Link } from "react-router-dom"
 import { useState, useEffect } from "react"
 import { collection, query, where, getDocs } from 'firebase/firestore'
@@ -173,8 +173,13 @@ export default function BranchServicesPage() {
                       <span>{service.duration}</span>
                     </div>
                     <div className="flex items-center gap-1">
+<<<<<<< HEAD
                       <DollarSign className="w-4 h-4" />
                       <span className="font-poppins font-semibold text-[#160B53]">{service.price == null ? (service.branchPricing || '—') : service.price}</span>
+=======
+                      <Banknote className="w-4 h-4" />
+                      <span className="font-poppins font-semibold text-[#160B53]">{service.price}</span>
+>>>>>>> 7713a9f67f1c6565bd01262aaa6791d868a6e940
                     </div>
                   </div>
                   

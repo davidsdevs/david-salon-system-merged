@@ -11,14 +11,15 @@ import {
   Filter, 
   Edit, 
   Power,
-  Mail,
-  Eye
+  Eye,
+  Key
 } from 'lucide-react';
-import { getAllUsers, toggleUserStatus, resetUserPassword } from '../../services/userService';
+import { getAllUsers, toggleUserStatus } from '../../services/userService';
 import { getAllBranches } from '../../services/branchService';
 import { useAuth } from '../../context/AuthContext';
 import { USER_ROLES, ROLE_LABELS } from '../../utils/constants';
-import { formatDate, getFullName, getInitials } from '../../utils/helpers';
+import { formatDate, getFullName, getInitials, getUserRoles } from '../../utils/helpers';
+import { setRolePassword } from '../../services/rolePasswordService';
 import UserFormModal from '../../components/users/UserFormModal';
 import UserDetailsModal from '../../components/users/UserDetailsModal';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
@@ -111,11 +112,30 @@ const UsersManagement = () => {
     }
   };
 
-  const handleResetPassword = async (email) => {
+  const handleResetRolePasswords = async (user) => {
+    if (!user?.id) {
+      toast.error('User not found');
+      return;
+    }
+
+    const defaultPassword = 'Role123!';
+    const userRoles = getUserRoles(user);
+
+    if (userRoles.length === 0) {
+      toast.error('User has no roles assigned');
+      return;
+    }
+
     try {
-      await resetUserPassword(email);
+      // Reset password for each role
+      for (const role of userRoles) {
+        await setRolePassword(user.id, role, defaultPassword);
+      }
+
+      toast.success(`All role passwords reset to "${defaultPassword}" for ${getFullName(user)}`);
     } catch (error) {
-      // Error handled in service
+      console.error('Error resetting role passwords:', error);
+      toast.error('Failed to reset role passwords');
     }
   };
 
@@ -347,11 +367,11 @@ const UsersManagement = () => {
                           <Edit className="w-5 h-5" />
                         </button>
                         <button
-                          onClick={() => handleResetPassword(user.email)}
-                          className="text-orange-600 hover:text-orange-900"
-                          title="Reset Password"
+                          onClick={() => handleResetRolePasswords(user)}
+                          className="text-purple-600 hover:text-purple-900"
+                          title="Reset All Role Passwords to Role123!"
                         >
-                          <Mail className="w-5 h-5" />
+                          <Key className="w-5 h-5" />
                         </button>
                         <button
                           onClick={() => handleToggleStatus(user.id, user.isActive)}

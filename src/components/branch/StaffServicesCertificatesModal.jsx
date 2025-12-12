@@ -1,10 +1,11 @@
 /**
  * Staff Services & Certificates Modal
  * Allows configuring services and certificates for staff members
+ * Big Data Friendly: Includes category filtering, search, and pagination
  */
 
-import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Award, Scissors, Edit } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, Plus, Trash2, Award, Scissors, Edit, Search, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getBranchServices } from '../../services/branchServicesService';
 import { updateUser } from '../../services/userService';
 import { useAuth } from '../../context/AuthContext';
@@ -32,13 +33,52 @@ const StaffServicesCertificatesModal = ({
     issuer: '',
     date: ''
   });
+  
+  // Big Data Optimizations: Search, Filter, Pagination
+  const [serviceSearchTerm, setServiceSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [currentServicePage, setCurrentServicePage] = useState(1);
+  const [servicesPerPage] = useState(20); // Show 20 services per page
+  
+  // Certificate search and pagination
+  const [certificateSearchTerm, setCertificateSearchTerm] = useState('');
+  const [debouncedCertSearchTerm, setDebouncedCertSearchTerm] = useState('');
+  const [currentCertPage, setCurrentCertPage] = useState(1);
+  const [certsPerPage] = useState(10);
 
   useEffect(() => {
     if (isOpen && branchId) {
       fetchBranchServices();
       loadStaffData();
+      // Reset filters when modal opens
+      setServiceSearchTerm('');
+      setDebouncedSearchTerm('');
+      setCategoryFilter('all');
+      setCurrentServicePage(1);
+      setCertificateSearchTerm('');
+      setDebouncedCertSearchTerm('');
+      setCurrentCertPage(1);
     }
   }, [isOpen, branchId, staff]);
+
+  // Debounce service search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(serviceSearchTerm);
+      setCurrentServicePage(1); // Reset to first page on search
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [serviceSearchTerm]);
+
+  // Debounce certificate search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedCertSearchTerm(certificateSearchTerm);
+      setCurrentCertPage(1); // Reset to first page on search
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [certificateSearchTerm]);
 
   const fetchBranchServices = async () => {
     try {
@@ -121,6 +161,78 @@ const StaffServicesCertificatesModal = ({
     setCertificates(updated);
   };
 
+  // Get available categories from services
+  const availableCategories = useMemo(() => {
+    const categories = new Set();
+    branchServices.forEach(service => {
+      if (service.category) {
+        categories.add(service.category);
+      }
+    });
+    return ['all', ...Array.from(categories).sort()];
+  }, [branchServices]);
+
+  // Filter and paginate services
+  const filteredAndPaginatedServices = useMemo(() => {
+    let filtered = branchServices;
+
+    // Apply category filter
+    if (categoryFilter !== 'all') {
+      filtered = filtered.filter(service => service.category === categoryFilter);
+    }
+
+    // Apply search filter
+    if (debouncedSearchTerm.trim()) {
+      const searchLower = debouncedSearchTerm.toLowerCase();
+      filtered = filtered.filter(service => 
+        service.name?.toLowerCase().includes(searchLower) ||
+        service.description?.toLowerCase().includes(searchLower) ||
+        service.category?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Pagination
+    const startIndex = (currentServicePage - 1) * servicesPerPage;
+    const endIndex = startIndex + servicesPerPage;
+    const paginated = filtered.slice(startIndex, endIndex);
+
+    return {
+      services: paginated,
+      total: filtered.length,
+      totalPages: Math.ceil(filtered.length / servicesPerPage),
+      hasMore: endIndex < filtered.length,
+      hasPrevious: currentServicePage > 1
+    };
+  }, [branchServices, categoryFilter, debouncedSearchTerm, currentServicePage, servicesPerPage]);
+
+  // Filter and paginate certificates
+  const filteredAndPaginatedCertificates = useMemo(() => {
+    let filtered = certificates;
+
+    // Apply search filter
+    if (debouncedCertSearchTerm.trim()) {
+      const searchLower = debouncedCertSearchTerm.toLowerCase();
+      filtered = filtered.filter(cert => 
+        cert.name?.toLowerCase().includes(searchLower) ||
+        cert.issuer?.toLowerCase().includes(searchLower) ||
+        cert.date?.toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Pagination
+    const startIndex = (currentCertPage - 1) * certsPerPage;
+    const endIndex = startIndex + certsPerPage;
+    const paginated = filtered.slice(startIndex, endIndex);
+
+    return {
+      certificates: paginated,
+      total: filtered.length,
+      totalPages: Math.ceil(filtered.length / certsPerPage),
+      hasMore: endIndex < filtered.length,
+      hasPrevious: currentCertPage > 1
+    };
+  }, [certificates, debouncedCertSearchTerm, currentCertPage, certsPerPage]);
+
   const handleSave = async () => {
     if (!staff || !staff.id) {
       toast.error('Staff member not found');
@@ -185,14 +297,16 @@ const StaffServicesCertificatesModal = ({
             <>
               {/* Services Section */}
               <div>
-                <div className="flex items-center gap-2 mb-4">
-                  <Scissors className="w-5 h-5 text-primary-600" />
-                  <h3 className="text-lg font-semibold text-gray-900">
-                    Available Services
-                  </h3>
-                  <span className="text-sm text-gray-500">
-                    ({selectedServices.length} selected)
-                  </span>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Scissors className="w-5 h-5 text-primary-600" />
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      Available Services
+                    </h3>
+                    <span className="text-sm text-gray-500">
+                      ({selectedServices.length} selected of {branchServices.length} total)
+                    </span>
+                  </div>
                 </div>
                 <p className="text-sm text-gray-600 mb-4">
                   {isReadOnly 
@@ -207,43 +321,146 @@ const StaffServicesCertificatesModal = ({
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {branchServices.map((service) => (
-                      <label
-                        key={service.id}
-                        className={`flex items-center gap-3 p-3 border-2 rounded-lg transition-colors ${
-                          isReadOnly 
-                            ? 'cursor-default' 
-                            : 'cursor-pointer hover:border-gray-300'
-                        } ${
-                          selectedServices.includes(service.id)
-                            ? 'border-primary-500 bg-primary-50'
-                            : 'border-gray-200'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedServices.includes(service.id)}
-                          onChange={() => handleServiceToggle(service.id)}
-                          disabled={isReadOnly}
-                          className={`w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500 ${
-                            isReadOnly ? 'opacity-50 cursor-not-allowed' : ''
-                          }`}
-                        />
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">{service.name}</p>
-                          {service.description && (
-                            <p className="text-xs text-gray-500 mt-1 line-clamp-1">
-                              {service.description}
-                            </p>
-                          )}
-                          <p className="text-xs text-primary-600 mt-1">
-                            ₱{parseFloat(service.price || 0).toLocaleString()}
-                          </p>
+                  <>
+                    {/* Search and Filter Controls */}
+                    <div className="mb-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        {/* Search Input */}
+                        <div className="relative flex-1">
+                          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                          <input
+                            type="text"
+                            placeholder="Search services by name, description, or category..."
+                            value={serviceSearchTerm}
+                            onChange={(e) => setServiceSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
+                          />
                         </div>
-                      </label>
-                    ))}
-                  </div>
+                        
+                        {/* Category Filter */}
+                        <div className="relative sm:w-64">
+                          <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                          <select
+                            value={categoryFilter}
+                            onChange={(e) => {
+                              setCategoryFilter(e.target.value);
+                              setCurrentServicePage(1);
+                            }}
+                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm appearance-none bg-white"
+                          >
+                            <option value="all">All Categories</option>
+                            {availableCategories.filter(cat => cat !== 'all').map(category => (
+                              <option key={category} value={category}>
+                                {category}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      
+                      {/* Results Count */}
+                      <div className="text-xs text-gray-600">
+                        Showing {filteredAndPaginatedServices.services.length} of {filteredAndPaginatedServices.total} services
+                        {categoryFilter !== 'all' && ` in "${categoryFilter}"`}
+                        {debouncedSearchTerm && ` matching "${debouncedSearchTerm}"`}
+                      </div>
+                    </div>
+
+                    {/* Services Grid */}
+                    {filteredAndPaginatedServices.services.length === 0 ? (
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+                        <Scissors className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                        <p className="text-gray-500">No services found matching your criteria</p>
+                        {(categoryFilter !== 'all' || debouncedSearchTerm) && (
+                          <button
+                            onClick={() => {
+                              setCategoryFilter('all');
+                              setServiceSearchTerm('');
+                            }}
+                            className="mt-2 text-sm text-primary-600 hover:text-primary-700"
+                          >
+                            Clear filters
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {filteredAndPaginatedServices.services.map((service) => (
+                            <label
+                              key={service.id}
+                              className={`flex items-center gap-3 p-3 border-2 rounded-lg transition-colors ${
+                                isReadOnly 
+                                  ? 'cursor-default' 
+                                  : 'cursor-pointer hover:border-gray-300'
+                              } ${
+                                selectedServices.includes(service.id)
+                                  ? 'border-primary-500 bg-primary-50'
+                                  : 'border-gray-200'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selectedServices.includes(service.id)}
+                                onChange={() => handleServiceToggle(service.id)}
+                                disabled={isReadOnly}
+                                className={`w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500 ${
+                                  isReadOnly ? 'opacity-50 cursor-not-allowed' : ''
+                                }`}
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-gray-900 truncate">{service.name}</p>
+                                    {service.category && (
+                                      <span className="inline-block mt-1 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">
+                                        {service.category}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                {service.description && (
+                                  <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                                    {service.description}
+                                  </p>
+                                )}
+                                <p className="text-xs text-primary-600 mt-1 font-medium">
+                                  ₱{parseFloat(service.price || 0).toLocaleString()}
+                                </p>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+
+                        {/* Pagination Controls */}
+                        {filteredAndPaginatedServices.totalPages > 1 && (
+                          <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+                            <div className="text-sm text-gray-600">
+                              Page {currentServicePage} of {filteredAndPaginatedServices.totalPages}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setCurrentServicePage(prev => Math.max(1, prev - 1))}
+                                disabled={!filteredAndPaginatedServices.hasPrevious || isReadOnly}
+                                className="flex items-center gap-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                <ChevronLeft className="w-4 h-4" />
+                                Previous
+                              </button>
+                              <button
+                                onClick={() => setCurrentServicePage(prev => Math.min(filteredAndPaginatedServices.totalPages, prev + 1))}
+                                disabled={!filteredAndPaginatedServices.hasMore || isReadOnly}
+                                className="flex items-center gap-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Next
+                                <ChevronRight className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -334,46 +551,118 @@ const StaffServicesCertificatesModal = ({
                   </div>
                 )}
 
+                {/* Certificate Search */}
+                {certificates.length > 5 && (
+                  <div className="mb-4">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Search certificates..."
+                        value={certificateSearchTerm}
+                        onChange={(e) => setCertificateSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent text-sm"
+                      />
+                    </div>
+                    {filteredAndPaginatedCertificates.total !== certificates.length && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        Showing {filteredAndPaginatedCertificates.certificates.length} of {filteredAndPaginatedCertificates.total} certificates
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Certificates List */}
                 {certificates.length === 0 ? (
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
                     <Award className="w-12 h-12 text-gray-400 mx-auto mb-2" />
                     <p className="text-gray-500">No certificates added yet</p>
                   </div>
-                ) : (
-                  <div className="space-y-2">
-                    {certificates.map((cert, index) => (
-                      <div
-                        key={index}
-                        className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
+                ) : filteredAndPaginatedCertificates.certificates.length === 0 ? (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
+                    <Award className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                    <p className="text-gray-500">No certificates found matching your search</p>
+                    {certificateSearchTerm && (
+                      <button
+                        onClick={() => setCertificateSearchTerm('')}
+                        className="mt-2 text-sm text-primary-600 hover:text-primary-700"
                       >
-                        <div className="flex-1">
-                          <p className="font-medium text-gray-900">{cert.name}</p>
-                          <p className="text-sm text-gray-600 mt-1">
-                            Issued by: {cert.issuer} ΓÇó Date: {cert.date}
-                          </p>
-                        </div>
-                        {!isReadOnly && (
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => handleEditCertificate(index)}
-                              className="p-2 text-gray-600 hover:text-primary-600 transition-colors"
-                              title="Edit Certificate"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteCertificate(index)}
-                              className="p-2 text-red-600 hover:text-red-700 transition-colors"
-                              title="Delete Certificate"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                        Clear search
+                      </button>
+                    )}
                   </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      {filteredAndPaginatedCertificates.certificates.map((cert, displayIndex) => {
+                        // Find the actual index in the original certificates array
+                        const actualIndex = certificates.findIndex(c => 
+                          c.name === cert.name && 
+                          c.issuer === cert.issuer && 
+                          c.date === cert.date
+                        );
+                        
+                        return (
+                          <div
+                            key={`${cert.name}-${cert.issuer}-${cert.date}-${displayIndex}`}
+                            className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
+                          >
+                            <div className="flex-1">
+                              <p className="font-medium text-gray-900">{cert.name}</p>
+                              <p className="text-sm text-gray-600 mt-1">
+                                Issued by: {cert.issuer} • Date: {cert.date}
+                              </p>
+                            </div>
+                            {!isReadOnly && (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleEditCertificate(actualIndex)}
+                                  className="p-2 text-gray-600 hover:text-primary-600 transition-colors"
+                                  title="Edit Certificate"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteCertificate(actualIndex)}
+                                  className="p-2 text-red-600 hover:text-red-700 transition-colors"
+                                  title="Delete Certificate"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Certificate Pagination */}
+                    {filteredAndPaginatedCertificates.totalPages > 1 && (
+                      <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+                        <div className="text-sm text-gray-600">
+                          Page {currentCertPage} of {filteredAndPaginatedCertificates.totalPages}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setCurrentCertPage(prev => Math.max(1, prev - 1))}
+                            disabled={!filteredAndPaginatedCertificates.hasPrevious || isReadOnly}
+                            className="flex items-center gap-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                            Previous
+                          </button>
+                          <button
+                            onClick={() => setCurrentCertPage(prev => Math.min(filteredAndPaginatedCertificates.totalPages, prev + 1))}
+                            disabled={!filteredAndPaginatedCertificates.hasMore || isReadOnly}
+                            className="flex items-center gap-1 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            Next
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </>

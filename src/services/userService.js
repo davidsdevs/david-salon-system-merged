@@ -16,17 +16,11 @@ import {
   limit,
   Timestamp
 } from 'firebase/firestore';
-import { 
-  createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
-  updateProfile as updateFirebaseProfile,
-  signOut
-} from 'firebase/auth';
-import { initializeApp, deleteApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { db, auth, firebaseConfig } from '../config/firebase';
+import { db, auth } from '../config/firebase';
+import { updateProfile as updateFirebaseProfile } from 'firebase/auth';
 import { logActivity } from './activityService';
-import { sendUserCreatedEmail, sendAccountActivatedEmail, sendAccountDeactivatedEmail, sendPasswordResetNotification } from './emailService';
+import { sendUserCreatedEmail, sendAccountActivatedEmail, sendAccountDeactivatedEmail } from './emailService';
+import { initializeRolePasswordsWithMap } from './rolePasswordService';
 import { ROLE_LABELS } from '../utils/constants';
 import toast from 'react-hot-toast';
 
@@ -123,51 +117,52 @@ export const getUserByEmail = async (email) => {
 };
 
 /**
- * Create a new user
+ * Create a new user (Firestore only, no Firebase Auth)
+ * Stores passwords in rolePasswords map for multiple role password support
  * @param {Object} userData - User data
  * @param {Object} currentUser - User creating the account
  * @returns {Promise<Object>} Created user data
  */
 export const createUser = async (userData, currentUser) => {
   try {
-    // Create a secondary Firebase app instance to avoid logging out current user
-    // This prevents the admin from being logged out when creating a new user
-    const secondaryApp = initializeApp(firebaseConfig, 'Secondary');
-    const secondaryAuth = getAuth(secondaryApp);
+    // Check if email already exists
+    const usersRef = collection(db, 'users');
+    const emailQuery = query(usersRef, where('email', '==', userData.email));
+    const existingUsers = await getDocs(emailQuery);
     
-    // Create Firebase Auth account using secondary auth
-    const userCredential = await createUserWithEmailAndPassword(
-      secondaryAuth,
-      userData.email,
-      userData.password || 'DefaultPass123!' // Temporary password
-    );
+    if (!existingUsers.empty) {
+      toast.error('Email address is already in use');
+      throw new Error('Email address is already in use');
+    }
     
-    const user = userCredential.user;
+    // Generate unique user ID
+    const userId = doc(collection(db, 'users')).id;
     
-    // Build full name for Firebase Auth
-    const fullName = `${userData.firstName}${userData.middleName ? ' ' + userData.middleName.charAt(0) + '.' : ''} ${userData.lastName}`.trim();
-    
-    // Update display name in Firebase Auth
-    await updateFirebaseProfile(user, {
-      displayName: fullName
-    });
-    
-    // Sign out the newly created user from secondary auth and delete the secondary app
-    await signOut(secondaryAuth);
-    await deleteApp(secondaryApp);
-    
-    // Create Firestore user document
     // Handle roles: if single role provided, convert to array
     const roles = Array.isArray(userData.roles) ? userData.roles : 
                   userData.role ? [userData.role] : [];
     
+    if (roles.length === 0) {
+      toast.error('User must have at least one role');
+      throw new Error('User must have at least one role');
+    }
+    
+    // Build full name
+    const fullName = `${userData.firstName}${userData.middleName ? ' ' + userData.middleName.charAt(0) + '.' : ''} ${userData.lastName}`.trim();
+    
+    // Get passwords for each role (default if not provided)
+    const defaultPassword = 'DefaultPass123!';
+    const rolePasswords = userData.rolePasswords || {};
+    
+    // Create Firestore user document
     const userDocData = {
       email: userData.email,
       firstName: userData.firstName,
       middleName: userData.middleName || '',
       lastName: userData.lastName,
       phone: userData.phone || '',
-      roles: roles, // New: array of roles (NO MORE LEGACY FIELDS)
+      roles: roles,
+      role: roles[0], // Legacy field for compatibility
       branchId: userData.branchId || null,
       isActive: true,
       createdAt: Timestamp.now(),
@@ -175,13 +170,17 @@ export const createUser = async (userData, currentUser) => {
       createdBy: currentUser.uid
     };
     
-    await setDoc(doc(db, 'users', user.uid), userDocData);
+    // Create user document in Firestore
+    await setDoc(doc(db, 'users', userId), userDocData);
+    
+    // Initialize role passwords (use specific password for each role, or default)
+    await initializeRolePasswordsWithMap(userId, roles, rolePasswords, defaultPassword);
     
     // Log activity
     await logActivity({
       action: 'user_created',
       performedBy: currentUser.uid,
-      targetUser: user.uid,
+      targetUser: userId,
       details: {
         roles: roles,
         email: userData.email,
@@ -189,29 +188,33 @@ export const createUser = async (userData, currentUser) => {
       }
     });
 
-    // Send welcome email with temporary password (async, don't wait)
+    // Send welcome email with temporary passwords (async, don't wait)
+    // Build password summary for email
+    const passwordSummary = roles.map(role => {
+      const rolePassword = rolePasswords[role] || defaultPassword;
+      return `${ROLE_LABELS[role]}: ${rolePassword}`;
+    }).join('\n');
+    
     sendUserCreatedEmail({
       email: userData.email,
       displayName: fullName,
       role: roles.map(r => ROLE_LABELS[r]).join(', '),
-      tempPassword: userData.password || 'DefaultPass123!'
+      temporaryPassword: passwordSummary // Send all role passwords
     }).catch(err => console.error('User created email error:', err));
     
     toast.success(`User ${fullName} created successfully!`);
     
     return {
-      id: user.uid,
+      id: userId,
       ...userDocData
     };
   } catch (error) {
     console.error('Error creating user:', error);
     
-    if (error.code === 'auth/email-already-in-use') {
-      toast.error('Email address is already in use');
-    } else if (error.code === 'auth/weak-password') {
-      toast.error('Password is too weak');
+    if (error.message && error.message.includes('already in use')) {
+      // Already handled above
     } else {
-      toast.error('Failed to create user');
+      toast.error(error.message || 'Failed to create user');
     }
     
     throw error;
@@ -335,41 +338,31 @@ export const toggleUserStatus = async (userId, isActive, currentUser) => {
 };
 
 /**
- * Send password reset email
+ * Send password reset email (updates rolePasswords in Firestore, not Firebase Auth)
  * @param {string} email - User email
  * @returns {Promise<void>}
  */
 export const resetUserPassword = async (email) => {
   try {
-    // Get user data for custom email
-    const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('email', '==', email));
-    const snapshot = await getDocs(q);
+    // Use the new password reset service that updates rolePasswords
+    const { createPasswordResetToken } = await import('./passwordResetService');
+    const result = await createPasswordResetToken(email);
     
-    let userData = null;
-    if (!snapshot.empty) {
-      userData = snapshot.docs[0].data();
+    if (result.success) {
+      toast.success('Password reset email sent! Check your inbox.');
+    } else {
+      toast.error(result.error || 'Failed to send password reset email');
+      throw new Error(result.error || 'Failed to send password reset email');
     }
-
-    // Send Firebase password reset email
-    await sendPasswordResetEmail(auth, email);
-
-    // Send custom notification email (async, don't wait)
-    if (userData) {
-      sendPasswordResetNotification({
-        email: userData.email,
-        displayName: userData.displayName
-      }).catch(err => console.error('Password reset notification error:', err));
-    }
-
-    toast.success('Password reset email sent!');
   } catch (error) {
     console.error('Error sending password reset:', error);
     
-    if (error.code === 'auth/user-not-found') {
-      toast.error('User not found');
+    if (error.message && error.message.includes('not found')) {
+      toast.error('No account found with this email address');
+    } else if (error.message && error.message.includes('deactivated')) {
+      toast.error('Account is deactivated. Please contact administrator.');
     } else {
-      toast.error('Failed to send password reset email');
+      toast.error(error.message || 'Failed to send password reset email');
     }
     
     throw error;

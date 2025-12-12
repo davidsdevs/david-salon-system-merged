@@ -256,15 +256,28 @@ const ReceptionistBilling = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Billing & POS</h1>
-          <p className="text-gray-600">Process payments and manage transactions</p>
+          <p className="text-gray-600">View transactions and billing history</p>
         </div>
-        <button
-          onClick={handleWalkInBilling}
-          className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
-        >
-          <UserPlus className="w-5 h-5" />
-          Walk-in Customer
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleWalkInBilling}
+            className="flex items-center gap-2 px-4 py-2 border border-green-600 text-green-700 rounded-lg hover:bg-green-50 transition-colors"
+          >
+            <UserPlus className="w-5 h-5" />
+            Add Walk-in / Check-in
+          </button>
+        </div>
+      </div>
+
+      {/* Info Banner */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
+        <Bell className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm text-blue-800">
+            <strong>Tip:</strong> To process a new payment, go to <a href="/receptionist/arrivals" className="font-medium underline hover:text-blue-900">Arrivals & Check-ins</a> page. 
+            Complete the service flow: Check-in → Start Service → Check-out (Billing).
+          </p>
+        </div>
       </div>
 
       {/* Daily Summary Cards */}

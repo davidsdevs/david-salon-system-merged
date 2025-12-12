@@ -15,7 +15,8 @@ const LeaveRequestModal = ({
   onSubmit, 
   staffMembers = [], 
   isForStaff = false,
-  currentUserId 
+  currentUserId,
+  editRequest = null // Pass existing request to edit
 }) => {
   const [formData, setFormData] = useState({
     employeeId: '',
@@ -36,10 +37,28 @@ const LeaveRequestModal = ({
         reason: '',
       });
       setErrors({});
+    } else if (editRequest) {
+      // Populate form with existing request data
+      const startDate = editRequest.startDate instanceof Date 
+        ? editRequest.startDate 
+        : new Date(editRequest.startDate);
+      const endDate = editRequest.endDate instanceof Date 
+        ? editRequest.endDate 
+        : new Date(editRequest.endDate);
+      
+      setFormData({
+        id: editRequest.id,
+        employeeId: editRequest.employeeId || currentUserId,
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+        type: editRequest.type || 'vacation',
+        reason: editRequest.reason || '',
+        status: editRequest.status || 'pending',
+      });
     } else if (!isForStaff && currentUserId) {
       setFormData(prev => ({ ...prev, employeeId: currentUserId }));
     }
-  }, [isOpen, isForStaff, currentUserId]);
+  }, [isOpen, isForStaff, currentUserId, editRequest]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -90,7 +109,7 @@ const LeaveRequestModal = ({
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <h2 className="text-xl font-semibold">
-            {isForStaff ? 'Add Leave for Staff' : 'Request Leave'}
+            {editRequest ? 'Edit Leave Request' : (isForStaff ? 'Add Leave for Staff' : 'Request Leave')}
           </h2>
           <button
             onClick={onClose}
@@ -214,7 +233,7 @@ const LeaveRequestModal = ({
               type="submit"
               className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
             >
-              Submit Request
+              {editRequest ? 'Update Request' : 'Submit Request'}
             </button>
           </div>
         </form>

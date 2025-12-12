@@ -3,8 +3,8 @@
  * For Branch Managers to manage holidays and special dates
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { Plus, Calendar as CalendarIcon, Trash2, Edit, AlertCircle, ChevronLeft, ChevronRight, Flag, User, Clock, CalendarDays } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Plus, Calendar as CalendarIcon, Trash2, Edit, AlertCircle, ChevronLeft, ChevronRight, Flag, User, Clock, CalendarDays, Printer } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   saveBranchCalendarEntry, 
@@ -14,6 +14,7 @@ import {
 import { getScheduleConfigurationsByBranch } from '../../services/scheduleService';
 import { getLeaveRequestsByBranch, LEAVE_TYPES } from '../../services/leaveManagementService';
 import { getUsersByBranch, getUserById } from '../../services/userService';
+import { getBranchById } from '../../services/branchService';
 import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
@@ -55,6 +56,12 @@ const CalendarManagement = () => {
   // Leave data
   const [leaveRequests, setLeaveRequests] = useState([]); // All leave requests for the branch
   const [leavesByDate, setLeavesByDate] = useState({}); // { dateKey: [{ employeeId, name, type, status, startDate, endDate }] }
+  
+  // Branch info for print
+  const [branchInfo, setBranchInfo] = useState(null);
+  
+  // Print ref
+  const printRef = useRef();
 
   useEffect(() => {
     if (userBranch) {
@@ -62,8 +69,18 @@ const CalendarManagement = () => {
       fetchScheduleData();
       fetchStaffMembers();
       fetchLeaveRequests();
+      fetchBranchInfo();
     }
   }, [userBranch]);
+
+  const fetchBranchInfo = async () => {
+    try {
+      const branch = await getBranchById(userBranch);
+      setBranchInfo(branch);
+    } catch (error) {
+      console.error('Error fetching branch info:', error);
+    }
+  };
 
   // Refresh schedule and leave data when month changes
   useEffect(() => {
@@ -121,13 +138,13 @@ const CalendarManagement = () => {
   const categorizePhilippineHoliday = (holiday) => {
     if (!holiday || !holiday.name) return { type: 'unknown', label: 'Holiday' };
     
-    // If it's All Saints' Day, return a neutral/invisible style (no red badge)
+    // If it's All Saints' Day, return a neutral style
     if (isAllSaintsDay(holiday)) {
       return { 
-        type: 'hidden', 
+        type: 'all_saints', 
         label: 'All Saints\' Day',
-        color: 'bg-transparent text-transparent border-transparent',
-        iconColor: 'text-transparent'
+        color: 'bg-gray-100 text-gray-700 border-gray-300',
+        iconColor: 'text-gray-600'
       };
     }
     
@@ -237,7 +254,10 @@ const CalendarManagement = () => {
     try {
       setHolidaysLoading(true);
       const holidays = await getPublicHolidays(year, 'PH');
-      console.log(`Fetched ${holidays.length} holidays for year ${year}`);
+      console.log(`✅ Fetched ${holidays.length} holidays for year ${year}`);
+      if (holidays.length > 0) {
+        console.log('Sample holidays:', holidays.slice(0, 3).map(h => ({ date: h.date, name: h.name || h.localName })));
+      }
       setHolidayCache(prev => ({
         ...prev,
         [year]: holidays
@@ -247,7 +267,7 @@ const CalendarManagement = () => {
         [year]: true
       }));
     } catch (error) {
-      console.error('Error fetching Philippine holidays:', error);
+      console.error('❌ Error fetching Philippine holidays:', error);
       toast.error('Failed to load Philippine holidays');
     } finally {
       setHolidaysLoading(false);
@@ -865,6 +885,321 @@ const CalendarManagement = () => {
     }
   };
 
+  // Print handler for single day
+  const handlePrintSingleDay = (date, dateKey, dayEntries, holiday, scheduledStylists, dayLeaves) => {
+    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    if (!printWindow) {
+      toast.error('Please allow pop-ups to print the day');
+      return;
+    }
+
+    const dateStr = date.toLocaleDateString('en-US', { 
+      weekday: 'long', 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric' 
+    });
+
+    let styles = '';
+    try {
+      styles = Array.from(document.styleSheets)
+        .map((sheet) => {
+          try {
+            return Array.from(sheet.cssRules || [])
+              .map((rule) => rule.cssText)
+              .join('\n');
+          } catch (e) {
+            return '';
+          }
+        })
+        .join('\n');
+    } catch (e) {
+      console.warn('Could not extract all styles:', e);
+    }
+
+    // Get holiday category colors
+    let holidayBg = '#fee2e2';
+    let holidayText = '#991b1b';
+    let holidayBorder = '#fca5a5';
+    let holidayLabel = '';
+    
+    if (holiday) {
+      const holidayCategory = categorizePhilippineHoliday(holiday);
+      holidayLabel = holidayCategory.label;
+      if (holidayCategory.label?.includes('Regular')) {
+        holidayBg = '#fee2e2';
+        holidayText = '#991b1b';
+        holidayBorder = '#fca5a5';
+      } else if (holidayCategory.label?.includes('Special Non-Working')) {
+        holidayBg = '#ffedd5';
+        holidayText = '#9a3412';
+        holidayBorder = '#fdba74';
+      } else if (holidayCategory.label?.includes('Special Working')) {
+        holidayBg = '#fef3c7';
+        holidayText = '#854d0e';
+        holidayBorder = '#fde047';
+      } else if (holidayCategory.label?.includes('All Saints')) {
+        holidayBg = '#f3f4f6';
+        holidayText = '#374151';
+        holidayBorder = '#d1d5db';
+      }
+    }
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Calendar Day - ${dateStr}</title>
+        <meta charset="utf-8">
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+          ${styles}
+          @media print {
+            @page {
+              size: A4 portrait;
+              margin: 0.5in;
+            }
+            * {
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+          }
+          body {
+            font-family: 'Poppins', sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: white;
+            color: #000;
+          }
+          .day-item {
+            margin-bottom: 8px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+          }
+        </style>
+      </head>
+      <body>
+        <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 15px;">
+          <h1 style="font-size: 24px; font-weight: bold; margin-bottom: 5px;">
+            ${branchInfo?.branchName || branchInfo?.name || 'Branch'} - Calendar Day
+          </h1>
+          <h2 style="font-size: 18px; font-weight: 600; margin-bottom: 10px;">
+            ${dateStr}
+          </h2>
+          <div style="font-size: 11px; color: #666;">
+            Printed: ${new Date().toLocaleString('en-US', { 
+              year: 'numeric', 
+              month: 'short', 
+              day: 'numeric', 
+              hour: '2-digit', 
+              minute: '2-digit' 
+            })}
+          </div>
+        </div>
+
+        <div style="max-width: 600px; margin: 0 auto;">
+          ${holiday ? `
+            <div class="day-item" style="background-color: ${holidayBg}; color: ${holidayText}; border-color: ${holidayBorder};">
+              <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">
+                ${holiday.localName || holiday.name}
+              </div>
+              <div style="font-size: 12px;">
+                ${holidayLabel}
+              </div>
+            </div>
+          ` : ''}
+
+          ${dayLeaves.length > 0 ? dayLeaves.map((leave, idx) => {
+            const leaveTypeInfo = LEAVE_TYPES.find(t => t.value === leave.type) || LEAVE_TYPES[0];
+            const bgColor = leave.status === 'pending' ? '#fefce8' : '#fff7ed';
+            const textColor = leave.status === 'pending' ? '#a16207' : '#c2410c';
+            const borderColor = leave.status === 'pending' ? '#fef08a' : '#fed7aa';
+            return `
+              <div class="day-item" style="background-color: ${bgColor}; color: ${textColor}; border-color: ${borderColor};">
+                <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">
+                  ${leave.name} - Leave
+                </div>
+                <div style="font-size: 12px;">
+                  Type: ${leaveTypeInfo.label} | Status: ${leave.status}
+                </div>
+              </div>
+            `;
+          }).join('') : ''}
+
+          ${scheduledStylists.length > 0 ? scheduledStylists.map((stylist, idx) => {
+            const timeDisplay = stylist.startTime && stylist.endTime 
+              ? `${formatTime12Hour(stylist.startTime)} - ${formatTime12Hour(stylist.endTime)}`
+              : '';
+            return `
+              <div class="day-item" style="background-color: #faf5ff; color: #7e22ce; border-color: #e9d5ff;">
+                <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">
+                  ${stylist.name} - Scheduled
+                </div>
+                ${timeDisplay ? `<div style="font-size: 12px;">Shift: ${timeDisplay}</div>` : ''}
+              </div>
+            `;
+          }).join('') : ''}
+
+          ${dayEntries.length > 0 ? dayEntries.map(entry => `
+            <div class="day-item" style="background-color: #eff6ff; color: #1e40af; border-color: #bfdbfe;">
+              <div style="font-weight: bold; font-size: 14px; margin-bottom: 5px;">
+                ${entry.title}
+              </div>
+              ${entry.description ? `<div style="font-size: 12px; margin-top: 5px;">${entry.description}</div>` : ''}
+            </div>
+          `).join('') : ''}
+
+          ${!holiday && dayLeaves.length === 0 && scheduledStylists.length === 0 && dayEntries.length === 0 ? `
+            <div style="text-align: center; padding: 40px; color: #999;">
+              <p>No events scheduled for this day</p>
+            </div>
+          ` : ''}
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+              window.onafterprint = function() {
+                setTimeout(function() {
+                  window.close();
+                }, 100);
+              };
+            }, 500);
+          };
+        </script>
+      </body>
+      </html>
+    `);
+    
+    printWindow.document.close();
+  };
+
+  // Print handler
+  const handlePrintCalendar = () => {
+    if (!printRef.current) {
+      toast.error('Print content not ready. Please try again.');
+      return;
+    }
+
+    setTimeout(() => {
+      if (!printRef.current) {
+        toast.error('Print content not ready. Please try again.');
+        return;
+      }
+
+      const printContentHTML = printRef.current.innerHTML;
+      
+      let styles = '';
+      try {
+        styles = Array.from(document.styleSheets)
+          .map((sheet) => {
+            try {
+              return Array.from(sheet.cssRules || [])
+                .map((rule) => rule.cssText)
+                .join('\n');
+            } catch (e) {
+              return '';
+            }
+          })
+          .join('\n');
+      } catch (e) {
+        console.warn('Could not extract all styles:', e);
+      }
+
+      const printWindow = window.open('', '_blank', 'width=1400,height=900');
+      if (!printWindow) {
+        toast.error('Please allow pop-ups to print the calendar');
+        return;
+      }
+
+      const monthName = currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+      printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Calendar - ${monthName}</title>
+          <meta charset="utf-8">
+          <style>
+            @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+            ${styles}
+            @media print {
+              @page {
+                size: A4 landscape;
+                margin: 0.25in;
+              }
+              * {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+              body {
+                margin: 0;
+                padding: 0;
+              }
+            }
+            body {
+              font-family: 'Poppins', sans-serif;
+              margin: 0;
+              padding: 20px;
+              background: white;
+              color: #000;
+            }
+            .print-calendar-grid {
+              display: grid;
+              grid-template-columns: repeat(7, 1fr);
+              gap: 4px;
+              width: 100%;
+            }
+            .print-calendar-day {
+              border: 1px solid #000;
+              min-height: 70px;
+              padding: 3px;
+              font-size: 8px;
+            }
+            .print-calendar-header {
+              display: grid;
+              grid-template-columns: repeat(7, 1fr);
+              gap: 4px;
+              margin-bottom: 4px;
+            }
+            .print-calendar-header-cell {
+              border: 1px solid #000;
+              padding: 8px;
+              text-align: center;
+              font-weight: bold;
+              font-size: 11px;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContentHTML}
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+                window.onafterprint = function() {
+                  setTimeout(function() {
+                    window.close();
+                  }, 100);
+                };
+                setTimeout(function() {
+                  if (!window.closed) {
+                    window.close();
+                  }
+                }, 30000);
+              }, 500);
+            };
+          </script>
+        </body>
+        </html>
+      `);
+      
+      printWindow.document.close();
+    }, 100);
+  };
+
   // All hooks must be called before any early returns
   const entryTypes = getCalendarEntryTypes();
   const calendarDays = useMemo(() => generateCalendarDays(currentMonth), [currentMonth]);
@@ -885,11 +1220,23 @@ const CalendarManagement = () => {
     const map = {};
     Object.values(holidayCache).forEach(yearHolidays => {
       yearHolidays?.forEach(holiday => {
-        map[holiday.date] = holiday;
+        if (holiday && holiday.date) {
+          map[holiday.date] = holiday;
+        }
       });
     });
+    // Debug: Log holidays for current month
+    const currentYear = currentMonth.getFullYear();
+    const currentMonthNum = currentMonth.getMonth();
+    const monthHolidays = Object.entries(map).filter(([date]) => {
+      const d = new Date(date);
+      return d.getFullYear() === currentYear && d.getMonth() === currentMonthNum;
+    });
+    if (monthHolidays.length > 0) {
+      console.log(`📅 Found ${monthHolidays.length} holidays in current month view:`, monthHolidays.map(([date, h]) => ({ date, name: h.name || h.localName })));
+    }
     return map;
-  }, [holidayCache]);
+  }, [holidayCache, currentMonth]);
 
   const currentMonthHolidays = useMemo(() => {
     const yearHolidays = holidayCache[currentMonth.getFullYear()] || [];
@@ -981,6 +1328,14 @@ const CalendarManagement = () => {
           </div>
           <div className="flex items-center gap-2">
             <button
+              onClick={handlePrintCalendar}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              title="Print Calendar"
+            >
+              <Printer className="w-4 h-4" />
+              Print
+            </button>
+            <button
               onClick={() => handleMonthChange('prev')}
               className="p-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
               title="Previous Month"
@@ -1030,37 +1385,50 @@ const CalendarManagement = () => {
                     <span className={isDimmed ? 'text-gray-400' : 'text-gray-700'}>
                       {date.getDate()}
                     </span>
-                    {holiday && (() => {
-                      const holidayCategory = categorizePhilippineHoliday(holiday);
-                      // Hide All Saints' Day badge completely
-                      if (isAllSaintsDay(holiday)) {
-                        return null;
-                      }
-                      return (
-                        <span className={`text-[10px] font-semibold ${holidayCategory.iconColor} flex items-center gap-1 truncate max-w-[90px]`} title={holidayCategory.label}>
-                          <Flag className="w-3 h-3" />
-                          {holiday.localName || holiday.name}
-                        </span>
-                      );
-                    })()}
+                    <div className="flex items-center gap-1">
+                      {holiday && (() => {
+                        const holidayCategory = categorizePhilippineHoliday(holiday);
+                        return (
+                          <span className={`text-[10px] font-bold ${holidayCategory.iconColor} flex items-center gap-1 truncate max-w-[90px]`} title={`${holiday.localName || holiday.name} - ${holidayCategory.label}`}>
+                            <Flag className="w-3.5 h-3.5" />
+                            <span className="truncate">{holiday.localName || holiday.name}</span>
+                          </span>
+                        );
+                      })()}
+                      {inCurrentMonth && (() => {
+                        const dayLeavesForPrint = inCurrentMonth ? (leavesByDate[dateKey] || []) : [];
+                        return (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePrintSingleDay(date, dateKey, dayEntries, holiday, scheduledStylists, dayLeavesForPrint);
+                            }}
+                            className="opacity-30 hover:opacity-70 transition-opacity p-0.5"
+                            title="Print this day"
+                          >
+                            <Printer className="w-3 h-3 text-gray-500" />
+                          </button>
+                        );
+                      })()}
+                    </div>
                   </div>
                   <div className="flex-1 space-y-1 overflow-hidden">
-                    {/* Holiday Badge */}
-                    {holiday && inCurrentMonth && (() => {
-                      // Hide All Saints' Day badge completely
-                      if (isAllSaintsDay(holiday)) {
-                        return null;
-                      }
+                    {/* Holiday Badge - Show for all holidays, even outside current month */}
+                    {holiday && (() => {
                       const holidayCategory = categorizePhilippineHoliday(holiday);
                       return (
                         <button
                           onClick={() => handleShowDetails(holiday, 'holiday')}
-                          className={`w-full text-left text-[10px] px-1.5 py-0.5 rounded border ${holidayCategory.color} truncate hover:opacity-80 cursor-pointer transition-opacity`}
+                          className={`w-full text-left text-[11px] px-2 py-1.5 rounded-md border-2 font-semibold ${holidayCategory.color} truncate hover:shadow-md hover:scale-[1.02] cursor-pointer transition-all ${!inCurrentMonth ? 'opacity-70' : ''}`}
                           title={`${holiday.localName || holiday.name} - ${holidayCategory.label}`}
                         >
-                          <Flag className="w-2.5 h-2.5 inline mr-1" />
-                          <span className="font-medium">{holiday.localName || holiday.name}</span>
-                          <span className="text-[9px] ml-1">({holidayCategory.label})</span>
+                          <div className="flex items-center gap-1.5">
+                            <Flag className="w-3 h-3 flex-shrink-0" />
+                            <span className="font-bold truncate">{holiday.localName || holiday.name}</span>
+                          </div>
+                          <div className="text-[9px] mt-0.5 font-medium opacity-90">
+                            {holidayCategory.label}
+                          </div>
                         </button>
                       );
                     })()}
@@ -1185,30 +1553,53 @@ const CalendarManagement = () => {
               );
             })}
           </div>
-          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600">
-            <div className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full bg-blue-500" />
-              Reminder
-            </div>
-            <div className="flex items-center gap-2">
-              <CalendarDays className="w-3 h-3 text-orange-600" />
-              Leave
-            </div>
-            <div className="flex items-center gap-2">
-              <User className="w-3 h-3 text-purple-600" />
-              Scheduled Stylist
-            </div>
-            <div className="flex items-center gap-2">
-              <Flag className="w-3 h-3 text-red-600" />
-              Regular Holiday
-            </div>
-            <div className="flex items-center gap-2">
-              <Flag className="w-3 h-3 text-orange-600" />
-              Special Non-Working
-            </div>
-            <div className="flex items-center gap-2">
-              <Flag className="w-3 h-3 text-yellow-600" />
-              Special Working
+          {/* Legend */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Legend</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              {/* Calendar Items */}
+              <div className="flex items-center gap-2 text-xs">
+                <span className="w-4 h-4 rounded-full bg-blue-500 flex-shrink-0" />
+                <span className="text-gray-700">Reminder</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <CalendarDays className="w-4 h-4 text-orange-600 flex-shrink-0" />
+                <span className="text-gray-700">Leave</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <User className="w-4 h-4 text-purple-600 flex-shrink-0" />
+                <span className="text-gray-700">Scheduled Stylist</span>
+              </div>
+              
+              {/* Holiday Types */}
+              <div className="flex items-center gap-2 text-xs">
+                <div className="w-4 h-4 rounded-md border-2 bg-red-100 border-red-300 flex-shrink-0" />
+                <div className="flex flex-col">
+                  <span className="text-gray-700 font-semibold">Regular Holiday</span>
+                  <span className="text-[10px] text-gray-500">Paid day off</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <div className="w-4 h-4 rounded-md border-2 bg-orange-100 border-orange-300 flex-shrink-0" />
+                <div className="flex flex-col">
+                  <span className="text-gray-700 font-semibold">Special Non-Working</span>
+                  <span className="text-[10px] text-gray-500">No work, no pay</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <div className="w-4 h-4 rounded-md border-2 bg-yellow-100 border-yellow-300 flex-shrink-0" />
+                <div className="flex flex-col">
+                  <span className="text-gray-700 font-semibold">Special Working</span>
+                  <span className="text-[10px] text-gray-500">Regular workday</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <div className="w-4 h-4 rounded-md border-2 bg-gray-100 border-gray-300 flex-shrink-0" />
+                <div className="flex flex-col">
+                  <span className="text-gray-700 font-semibold">All Saints' Day</span>
+                  <span className="text-[10px] text-gray-500">Memorial day</span>
+                </div>
+              </div>
             </div>
           </div>
           {currentMonthHolidays.length === 0 && !holidaysLoading && (
@@ -1217,15 +1608,18 @@ const CalendarManagement = () => {
             </div>
           )}
           {currentMonthHolidays.length > 0 && (() => {
-            // Filter out All Saints' Day from all holiday lists
+            // Categorize all holidays including All Saints' Day
             const regularHolidays = currentMonthHolidays.filter(h => 
-              !isAllSaintsDay(h) && categorizePhilippineHoliday(h).type === 'regular'
+              categorizePhilippineHoliday(h).type === 'regular'
             );
             const specialNonWorking = currentMonthHolidays.filter(h => 
-              !isAllSaintsDay(h) && categorizePhilippineHoliday(h).type === 'special_non_working'
+              categorizePhilippineHoliday(h).type === 'special_non_working'
             );
             const specialWorking = currentMonthHolidays.filter(h => 
-              !isAllSaintsDay(h) && categorizePhilippineHoliday(h).type === 'special_working'
+              categorizePhilippineHoliday(h).type === 'special_working'
+            );
+            const allSaintsDay = currentMonthHolidays.filter(h => 
+              categorizePhilippineHoliday(h).type === 'all_saints'
             );
             
             return (
@@ -1260,6 +1654,18 @@ const CalendarManagement = () => {
                     <div className="flex flex-wrap gap-2">
                       {specialWorking.map(holiday => (
                         <span key={holiday.date} className="px-2 py-1 bg-white rounded border border-yellow-300 text-yellow-700">
+                          {holiday.localName || holiday.name} - {formatDate(new Date(holiday.date), 'MMM dd')}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {allSaintsDay.length > 0 && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs">
+                    <p className="font-semibold mb-2 text-gray-800">All Saints' Day:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {allSaintsDay.map(holiday => (
+                        <span key={holiday.date} className="px-2 py-1 bg-white rounded border border-gray-300 text-gray-700">
                           {holiday.localName || holiday.name} - {formatDate(new Date(holiday.date), 'MMM dd')}
                         </span>
                       ))}
@@ -1649,8 +2055,251 @@ const CalendarManagement = () => {
           </div>
         </div>
       )}
+
+      {/* Hidden Print Component */}
+      <div ref={printRef} style={{ position: 'fixed', left: '-200%', top: 0, width: '10.5in', zIndex: -1 }}>
+        <style>{`
+          @media print {
+            @page {
+              size: letter landscape;
+              margin: 0.5in;
+            }
+            * {
+              color: #000 !important;
+              background: transparent !important;
+            }
+          }
+        `}</style>
+        <div className="print-content" style={{ 
+          fontFamily: "'Poppins', sans-serif",
+          color: '#000',
+          background: '#fff',
+          padding: '10px'
+        }}>
+          {/* Header */}
+          <div style={{ 
+            textAlign: 'center',
+            marginBottom: '8px',
+            borderBottom: '1px solid #000',
+            paddingBottom: '5px'
+          }}>
+            <h1 style={{ 
+              fontSize: '16px',
+              fontWeight: 'bold',
+              marginBottom: '2px',
+              letterSpacing: '0.5px'
+            }}>
+              {branchInfo?.branchName || branchInfo?.name || 'Branch'} - Calendar
+            </h1>
+            <div style={{ 
+              fontSize: '12px',
+              fontWeight: '600',
+              marginBottom: '4px',
+              color: '#333'
+            }}>
+              {currentMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+            </div>
+            <div style={{ 
+              fontSize: '8px',
+              display: 'flex',
+              justifyContent: 'space-between'
+            }}>
+              <div style={{ textAlign: 'left' }}>
+                <div>Printed by: {currentUser ? getFullName(currentUser) : 'Manager'}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div>Printed: {new Date().toLocaleString('en-US', { 
+                  year: 'numeric', 
+                  month: 'short', 
+                  day: 'numeric', 
+                  hour: '2-digit', 
+                  minute: '2-digit' 
+                })}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Calendar Days Header */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(7, 1fr)',
+            gap: '2px',
+            marginBottom: '2px'
+          }}>
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+              <div key={day} style={{
+                border: '1px solid #000',
+                padding: '4px',
+                textAlign: 'center',
+                fontWeight: 'bold',
+                fontSize: '9px'
+              }}>
+                {day}
+              </div>
+            ))}
+          </div>
+
+          {/* Calendar Grid */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(7, 1fr)',
+            gap: '2px'
+          }}>
+            {calendarDays.map(({ date, inCurrentMonth }, index) => {
+              const dateKey = formatDateKey(date);
+              const dayEntries = entriesByDate[dateKey] || [];
+              const holiday = holidaysByDate[dateKey];
+              const isToday = date.getTime() === today.getTime();
+              const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+              const scheduledStylists = inCurrentMonth ? (scheduledStylistsByDate[dateKey] || []) : [];
+              const dayLeaves = inCurrentMonth ? (leavesByDate[dateKey] || []) : [];
+
+              return (
+                <div
+                  key={`print-${dateKey}-${index}`}
+                  style={{
+                    border: '1px solid #000',
+                    minHeight: '65px',
+                    padding: '3px',
+                    fontSize: '7px',
+                    backgroundColor: !inCurrentMonth ? '#f5f5f5' : (isWeekend ? '#f9fafb' : '#fff'),
+                    position: 'relative'
+                  }}
+                >
+                  {/* Date Number */}
+                  <div style={{
+                    fontSize: '9px',
+                    fontWeight: 'bold',
+                    marginBottom: '2px',
+                    color: !inCurrentMonth ? '#999' : (isToday ? '#000' : '#000'),
+                    borderBottom: isToday ? '1px solid #000' : 'none',
+                    paddingBottom: isToday ? '1px' : '0'
+                  }}>
+                    {date.getDate()}
+                  </div>
+
+                  {/* Content */}
+                  <div style={{ fontSize: '6px', lineHeight: '1.1' }}>
+                    {/* Holiday */}
+                    {holiday && (() => {
+                      const holidayCategory = categorizePhilippineHoliday(holiday);
+                      // Match exact badge colors from calendar view
+                      let bgColor = '#fee2e2'; // red-100 default
+                      let textColor = '#991b1b'; // red-800
+                      let borderColor = '#fca5a5'; // red-300
+                      
+                      if (holidayCategory.label?.includes('Regular')) {
+                        bgColor = '#fee2e2'; // red-100
+                        textColor = '#991b1b'; // red-800
+                        borderColor = '#fca5a5'; // red-300
+                      } else if (holidayCategory.label?.includes('Special Non-Working')) {
+                        bgColor = '#ffedd5'; // orange-100
+                        textColor = '#9a3412'; // orange-800
+                        borderColor = '#fdba74'; // orange-300
+                      } else if (holidayCategory.label?.includes('Special Working')) {
+                        bgColor = '#fef3c7'; // yellow-100
+                        textColor = '#854d0e'; // yellow-800
+                        borderColor = '#fde047'; // yellow-300
+                      } else if (holidayCategory.label?.includes('All Saints')) {
+                        bgColor = '#f3f4f6'; // gray-100
+                        textColor = '#374151'; // gray-700
+                        borderColor = '#d1d5db'; // gray-300
+                      }
+                      return (
+                        <div style={{
+                          marginBottom: '1px',
+                          padding: '1px 2px',
+                          border: `1px solid ${borderColor}`,
+                          fontSize: '6px',
+                          fontWeight: 'bold',
+                          backgroundColor: bgColor,
+                          color: textColor
+                        }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '6px' }}>{holiday.localName || holiday.name}</div>
+                          <div style={{ fontSize: '5px' }}>{holidayCategory.label}</div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Leaves */}
+                    {dayLeaves.slice(0, 1).map((leave, idx) => {
+                      const leaveTypeInfo = LEAVE_TYPES.find(t => t.value === leave.type) || LEAVE_TYPES[0];
+                      // Match exact badge colors: pending = yellow-50, approved = orange-50
+                      const bgColor = leave.status === 'pending' ? '#fefce8' : '#fff7ed'; // yellow-50 or orange-50
+                      const textColor = leave.status === 'pending' ? '#a16207' : '#c2410c'; // yellow-700 or orange-700
+                      const borderColor = leave.status === 'pending' ? '#fef08a' : '#fed7aa'; // yellow-200 or orange-200
+                      return (
+                        <div key={`leave-${idx}`} style={{
+                          marginBottom: '1px',
+                          padding: '1px 2px',
+                          border: `1px solid ${borderColor}`,
+                          fontSize: '5px',
+                          backgroundColor: bgColor,
+                          color: textColor
+                        }}>
+                          {leave.name} ({leaveTypeInfo.label})
+                        </div>
+                      );
+                    })}
+                    {dayLeaves.length > 1 && (
+                      <div style={{ fontSize: '5px', color: '#666' }}>
+                        +{dayLeaves.length - 1} leave{dayLeaves.length - 1 !== 1 ? 's' : ''}
+                      </div>
+                    )}
+
+                    {/* Scheduled Stylists */}
+                    {scheduledStylists.slice(0, 1).map((stylist, idx) => {
+                      const timeDisplay = stylist.startTime && stylist.endTime 
+                        ? `${formatTime12Hour(stylist.startTime)}-${formatTime12Hour(stylist.endTime)}`
+                        : '';
+                      // Match exact badge color: purple-50, purple-700, purple-200
+                      return (
+                        <div key={`stylist-${idx}`} style={{
+                          marginBottom: '1px',
+                          padding: '1px 2px',
+                          border: '1px solid #e9d5ff', // purple-200
+                          fontSize: '5px',
+                          backgroundColor: '#faf5ff', // purple-50
+                          color: '#7e22ce' // purple-700
+                        }}>
+                          {stylist.name} {timeDisplay && `(${timeDisplay})`}
+                        </div>
+                      );
+                    })}
+                    {scheduledStylists.length > 1 && (
+                      <div style={{ fontSize: '5px', color: '#666' }}>
+                        +{scheduledStylists.length - 1} stylist{scheduledStylists.length - 1 !== 1 ? 's' : ''}
+                      </div>
+                    )}
+
+                    {/* Reminders */}
+                    {dayEntries.slice(0, 1).map(entry => (
+                      <div key={entry.id} style={{
+                        marginBottom: '1px',
+                        padding: '1px 2px',
+                        border: '1px solid #bfdbfe', // blue-200
+                        fontSize: '5px',
+                        backgroundColor: '#eff6ff', // blue-50
+                        color: '#1e40af' // blue-800
+                      }}>
+                        {entry.title}
+                      </div>
+                    ))}
+                    {dayEntries.length > 1 && (
+                      <div style={{ fontSize: '5px', color: '#666' }}>
+                        +{dayEntries.length - 1} reminder{dayEntries.length - 1 !== 1 ? 's' : ''}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
 export default CalendarManagement;
+

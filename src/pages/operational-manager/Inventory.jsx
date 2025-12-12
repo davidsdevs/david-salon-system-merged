@@ -24,7 +24,7 @@ import {
   Building,
   TrendingUp,
   TrendingDown,
-  DollarSign,
+  Banknote,
   Home,
   BarChart3,
   ShoppingCart,
@@ -243,7 +243,7 @@ const OperationalManagerInventory = () => {
           
         <Card className="p-4">
           <div className="flex items-center">
-            <DollarSign className="h-8 w-8 text-green-600" />
+            <Banknote className="h-8 w-8 text-green-600" />
             <div className="ml-3">
               <p className="text-sm font-medium text-gray-600">Total Value</p>
               <p className="text-xl font-bold text-gray-900">₱{stats.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>

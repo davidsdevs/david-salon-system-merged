@@ -1,14 +1,15 @@
 /**
  * Service History Page - Stylist
- * View transaction history with commissions
+ * View transaction history with commissions, filters, and client analytics
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { Calendar, Clock, DollarSign, User, Search, Filter, TrendingUp } from 'lucide-react';
+import { Calendar, Clock, DollarSign, User, Search, Filter, TrendingUp, Scissors, Users, Phone, Mail, BarChart3 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import { formatDate, formatTime, formatCurrency } from '../../utils/helpers';
+import { getClientById, getClientProfile } from '../../services/clientService';
+import { formatDate, formatTime, formatCurrency, getFullName, getInitials } from '../../utils/helpers';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import toast from 'react-hot-toast';
 
@@ -18,18 +19,32 @@ const StylistServiceHistory = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState('all');
+  const [serviceFilter, setServiceFilter] = useState('all');
   const [sortBy, setSortBy] = useState('date-desc');
   const [summary, setSummary] = useState({
     totalSales: 0,
     totalCommission: 0,
-    transactionCount: 0
+    transactionCount: 0,
+    totalServices: 0,
+    averageCommission: 0,
+    uniqueClients: 0
   });
+  const [availableServices, setAvailableServices] = useState([]);
+  const [clientAnalytics, setClientAnalytics] = useState([]);
+  const [loadingClients, setLoadingClients] = useState(false);
 
   useEffect(() => {
     if (currentUser?.uid) {
       fetchTransactions();
     }
   }, [currentUser, dateFilter]);
+
+  useEffect(() => {
+    if (transactions.length > 0) {
+      extractServices();
+      calculateClientAnalytics();
+    }
+  }, [transactions]);
 
   const fetchTransactions = async () => {
     try {
@@ -105,6 +120,7 @@ const StylistServiceHistory = () => {
         snapshot = await getDocs(q);
       }
       const transactionsData = [];
+      const uniqueClientIds = new Set();
       
       // Process transactions - filter by stylist in items array
       snapshot.docs.forEach(doc => {
@@ -147,6 +163,9 @@ const StylistServiceHistory = () => {
         }
         
         if (hasStylistItems) {
+          if (data.clientId) {
+            uniqueClientIds.add(data.clientId);
+          }
           transactionsData.push({
             id: doc.id,
             ...data,
@@ -193,10 +212,20 @@ const StylistServiceHistory = () => {
         return sum;
       }, 0);
 
+      const totalServices = transactionsData.reduce((sum, t) => {
+        if (t.stylistItems && t.stylistItems.length > 0) {
+          return sum + t.stylistItems.filter(item => (item.type || 'service') === 'service').length;
+        }
+        return sum;
+      }, 0);
+
       setSummary({
         totalSales,
         totalCommission,
-        transactionCount: transactionsData.length
+        transactionCount: transactionsData.length,
+        totalServices,
+        averageCommission: transactionsData.length > 0 ? totalCommission / transactionsData.length : 0,
+        uniqueClients: uniqueClientIds.size
       });
 
     } catch (error) {
@@ -204,6 +233,100 @@ const StylistServiceHistory = () => {
       toast.error('Failed to load service history');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const extractServices = () => {
+    const servicesSet = new Set();
+    transactions.forEach(transaction => {
+      if (transaction.stylistItems && transaction.stylistItems.length > 0) {
+        transaction.stylistItems.forEach(item => {
+          if ((item.type || 'service') === 'service') {
+            const serviceName = item.name || item.serviceName || 'Unknown Service';
+            servicesSet.add(serviceName);
+          }
+        });
+      }
+    });
+    setAvailableServices(Array.from(servicesSet).sort());
+  };
+
+  const calculateClientAnalytics = async () => {
+    try {
+      setLoadingClients(true);
+      const clientMap = new Map();
+
+      // Group transactions by client
+      transactions.forEach(transaction => {
+        if (!transaction.clientId) return;
+        
+        const clientId = transaction.clientId;
+        if (!clientMap.has(clientId)) {
+          clientMap.set(clientId, {
+            clientId,
+            clientName: transaction.clientName || 'Guest Client',
+            transactions: [],
+            totalSpent: 0,
+            totalCommission: 0,
+            serviceCount: 0,
+            lastVisit: null
+          });
+        }
+
+        const clientData = clientMap.get(clientId);
+        const stylistItems = transaction.stylistItems || [];
+        const serviceItems = stylistItems.filter(item => (item.type || 'service') === 'service');
+        
+        if (serviceItems.length > 0) {
+          clientData.transactions.push(transaction);
+          const clientTotal = serviceItems.reduce((sum, item) => {
+            return sum + (item.price || item.adjustedPrice || 0) * (item.quantity || 1);
+          }, 0);
+          const clientCommission = serviceItems.reduce((sum, item) => {
+            if (item.commission !== undefined) {
+              return sum + item.commission;
+            }
+            const itemTotal = (item.price || item.adjustedPrice || 0) * (item.quantity || 1);
+            return sum + (itemTotal * 0.6);
+          }, 0);
+          
+          clientData.totalSpent += clientTotal;
+          clientData.totalCommission += clientCommission;
+          clientData.serviceCount += serviceItems.length;
+          
+          if (!clientData.lastVisit || transaction.createdAt > clientData.lastVisit) {
+            clientData.lastVisit = transaction.createdAt;
+          }
+        }
+      });
+
+      // Fetch client profiles
+      const analytics = await Promise.all(
+        Array.from(clientMap.values()).map(async (clientData) => {
+          try {
+            const client = await getClientById(clientData.clientId);
+            const profile = await getClientProfile(clientData.clientId);
+            return {
+              ...clientData,
+              client: client || null,
+              profile: profile || null,
+              email: client?.email || null,
+              phone: client?.phone || client?.phoneNumber || null
+            };
+          } catch (error) {
+            console.error(`Error fetching client ${clientData.clientId}:`, error);
+            return clientData;
+          }
+        })
+      );
+
+      // Sort by total spent (descending)
+      analytics.sort((a, b) => b.totalSpent - a.totalSpent);
+      setClientAnalytics(analytics);
+    } catch (error) {
+      console.error('Error calculating client analytics:', error);
+    } finally {
+      setLoadingClients(false);
     }
   };
 
@@ -217,6 +340,17 @@ const StylistServiceHistory = () => {
         transaction.transactionId?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         transaction.receiptNumber?.toLowerCase().includes(searchTerm.toLowerCase())
       );
+    }
+
+    // Apply service filter
+    if (serviceFilter !== 'all') {
+      filtered = filtered.filter(transaction => {
+        if (!transaction.stylistItems || transaction.stylistItems.length === 0) return false;
+        return transaction.stylistItems.some(item => {
+          const itemName = item.name || item.serviceName || 'Unknown Service';
+          return itemName === serviceFilter && (item.type || 'service') === 'service';
+        });
+      });
     }
 
     // Apply sorting
@@ -241,7 +375,7 @@ const StylistServiceHistory = () => {
     });
 
     return filtered;
-  }, [transactions, searchTerm, sortBy]);
+  }, [transactions, searchTerm, serviceFilter, sortBy]);
 
   const calculateCommission = (transaction) => {
     // Use stylistItems if available (pre-filtered)
@@ -302,8 +436,8 @@ const StylistServiceHistory = () => {
         <p className="text-gray-600">View your completed services and commissions</p>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Enhanced Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <div className="flex items-center justify-between">
             <div>
@@ -339,12 +473,137 @@ const StylistServiceHistory = () => {
             </div>
           </div>
         </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Services Rendered</p>
+              <p className="text-2xl font-bold text-indigo-600">{summary.totalServices}</p>
+            </div>
+            <div className="p-3 bg-indigo-100 rounded-full">
+              <Scissors className="w-6 h-6 text-indigo-600" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Avg Commission</p>
+              <p className="text-2xl font-bold text-orange-600">{formatCurrency(summary.averageCommission)}</p>
+            </div>
+            <div className="p-3 bg-orange-100 rounded-full">
+              <BarChart3 className="w-6 h-6 text-orange-600" />
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">Unique Clients</p>
+              <p className="text-2xl font-bold text-pink-600">{summary.uniqueClients}</p>
+            </div>
+            <div className="p-3 bg-pink-100 rounded-full">
+              <Users className="w-6 h-6 text-pink-600" />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Search and Filters */}
+      {/* Client Analytics Section */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100">
+        <div className="p-4 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+            <Users className="w-5 h-5 text-primary-600" />
+            Client Analytics
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">Clients you've worked with and their service history</p>
+        </div>
+        {loadingClients ? (
+          <div className="p-12 text-center">
+            <LoadingSpinner size="md" />
+            <p className="text-gray-500 mt-2">Loading client analytics...</p>
+          </div>
+        ) : clientAnalytics.length === 0 ? (
+          <div className="p-12 text-center">
+            <Users className="w-16 h-16 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500">No client data available</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-100">
+            {clientAnalytics.map((clientData) => (
+              <div key={clientData.clientId} className="p-4 hover:bg-gray-50 transition-colors">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
+                    {clientData.client?.photoURL || clientData.client?.imageURL ? (
+                      <img 
+                        src={clientData.client.photoURL || clientData.client.imageURL} 
+                        alt={clientData.clientName}
+                        className="w-full h-full rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="text-primary-600 font-bold text-lg">
+                        {getInitials(clientData.client || { firstName: clientData.clientName })}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <h3 className="font-semibold text-gray-900">{clientData.clientName}</h3>
+                        <div className="flex items-center gap-4 mt-1 text-sm text-gray-600">
+                          {clientData.phone && (
+                            <div className="flex items-center gap-1">
+                              <Phone className="w-4 h-4" />
+                              <span>{clientData.phone}</span>
+                            </div>
+                          )}
+                          {clientData.email && (
+                            <div className="flex items-center gap-1">
+                              <Mail className="w-4 h-4" />
+                              <span className="truncate">{clientData.email}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-gray-500">Total Spent</p>
+                        <p className="text-lg font-bold text-primary-600">{formatCurrency(clientData.totalSpent)}</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 pt-3 border-t border-gray-200">
+                      <div>
+                        <p className="text-xs text-gray-500">Services</p>
+                        <p className="text-sm font-semibold text-gray-900">{clientData.serviceCount}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Transactions</p>
+                        <p className="text-sm font-semibold text-gray-900">{clientData.transactions.length}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Commission</p>
+                        <p className="text-sm font-semibold text-green-600">{formatCurrency(clientData.totalCommission)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500">Last Visit</p>
+                        <p className="text-sm font-semibold text-gray-900">
+                          {clientData.lastVisit ? formatDate(clientData.lastVisit) : 'N/A'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Enhanced Search and Filters */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 space-y-4">
-        <div className="flex items-center gap-4">
-          <div className="flex-1 relative">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex-1 min-w-[200px] relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
             <input
               type="text"
@@ -363,6 +622,16 @@ const StylistServiceHistory = () => {
             <option value="today">Today</option>
             <option value="week">Last 7 Days</option>
             <option value="month">Last 30 Days</option>
+          </select>
+          <select
+            value={serviceFilter}
+            onChange={(e) => setServiceFilter(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 min-w-[200px]"
+          >
+            <option value="all">All Services</option>
+            {availableServices.map(service => (
+              <option key={service} value={service}>{service}</option>
+            ))}
           </select>
           <select
             value={sortBy}
@@ -390,7 +659,7 @@ const StylistServiceHistory = () => {
               <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-3" />
               <p className="text-gray-500">No transactions found</p>
               <p className="text-sm text-gray-400 mt-1">
-                {searchTerm || dateFilter !== 'all'
+                {searchTerm || dateFilter !== 'all' || serviceFilter !== 'all'
                   ? 'Try adjusting your filters'
                   : 'No completed services yet'}
               </p>
@@ -481,4 +750,3 @@ const StylistServiceHistory = () => {
 };
 
 export default StylistServiceHistory;
-

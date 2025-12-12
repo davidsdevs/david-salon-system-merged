@@ -1,5 +1,5 @@
 import Button from "../../../components/ui/Button"
-import { Clock, DollarSign, ArrowLeft, Check, ChevronDown, ChevronUp } from "lucide-react"
+import { Clock, Banknote, ArrowLeft, Check, ChevronDown, ChevronUp } from "lucide-react"
 import { useParams, Link } from "react-router-dom"
 import { useState, useEffect } from "react"
 import { collection, query, where, getDocs } from 'firebase/firestore'
@@ -247,7 +247,7 @@ export default function ServiceDetailPage() {
                   <span className="font-poppins font-medium">{service.duration}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <DollarSign className="w-5 h-5 text-gray-600" />
+                  <Banknote className="w-5 h-5 text-gray-600" />
                   <span className="font-poppins font-bold text-xl text-[#160B53]">{service.price}</span>
                 </div>
               </div>

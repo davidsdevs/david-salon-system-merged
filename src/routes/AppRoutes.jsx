@@ -82,12 +82,16 @@ import ReceptionistClients from '../pages/receptionist/Clients';
 import ReceptionistStaffSchedule from '../pages/receptionist/StaffSchedule';
 import ReceptionistServices from '../pages/receptionist/Services';
 import ReceptionistProducts from '../pages/receptionist/Products';
+import ReceptionistSalesReport from '../pages/receptionist/SalesReport';
 import StylistDashboard from '../pages/stylist/Dashboard';
 import StylistAppointments from '../pages/stylist/Appointments';
 import StylistCheckIns from '../pages/stylist/CheckIns';
 import StylistServiceHistory from '../pages/stylist/ServiceHistory';
 import StylistLeaveManagement from '../pages/stylist/LeaveManagement';
 import StylistProfile from '../pages/stylist/Profile';
+import StylistMySchedule from '../pages/stylist/MySchedule';
+import StylistPortfolio from '../pages/stylist/Portfolio';
+import StylistNotifications from '../pages/stylist/Notifications';
 import ClientDashboard from '../pages/client/Dashboard';
 import ClientAppointments from '../pages/client/Appointments';
 import ClientProducts from '../pages/client/Products';
@@ -305,6 +309,7 @@ const AppRoutes = () => {
               <Route path="arrivals" element={<ReceptionistArrivals />} />
               <Route path="clients" element={<ReceptionistClients />} />
               <Route path="billing" element={<ReceptionistBilling />} />
+              <Route path="sales-report" element={<ReceptionistSalesReport />} />
               <Route path="staff-schedule" element={<ReceptionistStaffSchedule />} />
               <Route path="services" element={<ReceptionistServices />} />
               <Route path="products" element={<ReceptionistProducts />} />
@@ -326,7 +331,10 @@ const AppRoutes = () => {
         <Route path="check-ins" element={<StylistCheckIns />} />
         <Route path="service-history" element={<StylistServiceHistory />} />
         <Route path="leave-management" element={<StylistLeaveManagement />} />
+        <Route path="schedule" element={<StylistMySchedule />} />
+        <Route path="portfolio" element={<StylistPortfolio />} />
         <Route path="profile" element={<StylistProfile />} />
+        <Route path="notifications" element={<StylistNotifications />} />
       </Route>
 
       {/* Client routes */}

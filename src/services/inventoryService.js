@@ -524,6 +524,7 @@ class InventoryService {
           expirationDate: expirationDate,
           receivedDate: receivedDate,
           receivedBy: String(deliveryData.receivedBy || ''),
+          usageType: String(item.usageType || 'otc'), // Copy usage type from PO item: 'otc' or 'salon-use'
           status: 'active', // active, expired, depleted
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
@@ -566,6 +567,7 @@ class InventoryService {
           receivedDate: receivedDate, // When batch was received
           receivedBy: String(deliveryData.receivedBy || ''),
           receivedByName: String(deliveryData.receivedByName || ''),
+          usageType: String(item.usageType || 'otc'), // Copy usage type from PO item: 'otc' or 'salon-use'
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           createdBy: String(deliveryData.receivedBy || ''),
@@ -701,12 +703,13 @@ class InventoryService {
   /**
    * Get batches for sale (FIFO selection without deduction)
    * Returns which batches should be used for a sale/transaction
-   * @param {Object} saleData - { branchId, productId, quantity }
+   * @param {Object} saleData - { branchId, productId, quantity, saleType? }
+   * @param {string} saleData.saleType - 'otc' (default) or 'salon-use' - filters batches by usage type
    * @returns {Object} - { success, batches: [{ batchId, batchNumber, quantity, expirationDate, ... }] }
    */
   async getBatchesForSale(saleData) {
     try {
-      const { branchId, productId, quantity } = saleData;
+      const { branchId, productId, quantity, saleType = 'otc' } = saleData;
       let remainingNeeded = Number(quantity);
 
       // Get all active batches for this product, sorted by expiration date (FIFO)
@@ -715,15 +718,33 @@ class InventoryService {
         return { success: false, message: 'No active batches found for this product', batches: [] };
       }
 
+      // Filter batches by usage type
+      const filteredBatches = batchesResult.batches.filter(batch => {
+        const batchUsageType = batch.usageType || 'otc'; // Default to 'otc' for backward compatibility
+        return batchUsageType === saleType;
+      });
+
+      if (filteredBatches.length === 0) {
+        const typeLabel = saleType === 'otc' ? 'OTC' : 'salon-use';
+        return { 
+          success: false, 
+          message: `No ${typeLabel} batches available for this product`,
+          batches: [],
+          availableQuantity: 0
+        };
+      }
+
       const batchesForSale = [];
+      let totalAvailable = 0;
 
       // Select batches in FIFO order
-      for (const batchRecord of batchesResult.batches) {
+      for (const batchRecord of filteredBatches) {
         if (remainingNeeded <= 0) break;
 
         const availableInBatch = batchRecord.remainingQuantity || 0;
         if (availableInBatch <= 0) continue;
 
+        totalAvailable += availableInBatch;
         const quantityFromBatch = Math.min(remainingNeeded, availableInBatch);
         remainingNeeded -= quantityFromBatch;
 
@@ -733,22 +754,25 @@ class InventoryService {
           quantity: quantityFromBatch,
           expirationDate: batchRecord.expirationDate,
           unitCost: batchRecord.unitCost,
-          remainingQuantity: availableInBatch // Current remaining before sale
+          remainingQuantity: availableInBatch, // Current remaining before sale
+          usageType: batchRecord.usageType || 'otc'
         });
       }
 
       if (remainingNeeded > 0) {
         return { 
           success: false, 
-          message: `Insufficient stock. Only ${quantity - remainingNeeded} units available.`,
-          batches: batchesForSale
+          message: `Insufficient ${saleType === 'otc' ? 'OTC' : 'salon-use'} stock. Only ${quantity - remainingNeeded} units available.`,
+          batches: batchesForSale,
+          availableQuantity: totalAvailable
         };
       }
 
       return { 
         success: true, 
         batches: batchesForSale,
-        message: `Found ${batchesForSale.length} batch(es) for sale`
+        availableQuantity: totalAvailable,
+        message: `Found ${batchesForSale.length} batch(es) for ${saleType === 'otc' ? 'OTC' : 'salon-use'} sale`
       };
     } catch (error) {
       console.error('Error getting batches for sale:', error);
@@ -816,17 +840,27 @@ class InventoryService {
 
   /**
    * Deduct stock using FIFO (First In First Out) - oldest batches first
-   * @param {Object} deductionData - { branchId, productId, quantity, reason, notes, createdBy, batches? }
+   * @param {Object} deductionData - { branchId, productId, quantity, reason, notes, createdBy, batches?, usageType? }
    * @param {Array} deductionData.batches - Optional: Pre-determined batches to use (from transaction/transfer)
+   * @param {string} deductionData.usageType - Optional: 'otc' or 'salon-use' - filters batches by usage type
    */
   async deductStockFIFO(deductionData) {
     try {
-      const { branchId, productId, quantity, batches: providedBatches } = deductionData;
+      const { branchId, productId, quantity, batches: providedBatches, usageType, reason } = deductionData;
       let remainingToDeduct = Number(quantity);
 
       const batch = writeBatch(db);
       const updatedBatches = [];
       let batchesToUse = [];
+
+      // Determine usage type based on reason if not explicitly provided
+      let requiredUsageType = usageType;
+      if (!requiredUsageType && reason) {
+        // If reason indicates service use, require salon-use batches
+        if (reason.toLowerCase().includes('service') || reason.toLowerCase().includes('salon')) {
+          requiredUsageType = 'salon-use';
+        }
+      }
 
       // If batches are provided (from transaction/transfer), use those
       // Otherwise, get all active batches for this product, sorted by expiration date (FIFO)
@@ -868,6 +902,22 @@ class InventoryService {
           return { success: false, message: 'No active batches found for this product' };
         }
         batchesToUse = batchesResult.batches;
+      }
+
+      // Filter batches by usage type if specified
+      if (requiredUsageType) {
+        batchesToUse = batchesToUse.filter(batch => {
+          const batchUsageType = batch.usageType || 'otc'; // Default to 'otc' for backward compatibility
+          return batchUsageType === requiredUsageType;
+        });
+
+        if (batchesToUse.length === 0) {
+          const typeLabel = requiredUsageType === 'otc' ? 'OTC' : 'salon-use';
+          return { 
+            success: false, 
+            message: `No ${typeLabel} batches available for this product. Required for: ${reason || 'deduction'}` 
+          };
+        }
       }
 
       if (batchesToUse.length === 0) {

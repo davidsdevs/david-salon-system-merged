@@ -35,7 +35,7 @@ import {
   ShoppingCart,
   Truck,
   BarChart3,
-  DollarSign,
+  Banknote,
   ClipboardList,
   UserCog,
   PackageCheck

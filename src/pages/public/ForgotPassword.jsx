@@ -6,8 +6,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Mail, ArrowLeft } from 'lucide-react';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth } from '../../config/firebase';
+import { createPasswordResetToken } from '../../services/passwordResetService';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import toast from 'react-hot-toast';
 
@@ -21,19 +20,17 @@ const ForgotPassword = () => {
     setLoading(true);
 
     try {
-      await sendPasswordResetEmail(auth, email);
-      setEmailSent(true);
-      toast.success('Password reset email sent! Check your inbox.');
+      const result = await createPasswordResetToken(email);
+      
+      if (result.success) {
+        setEmailSent(true);
+        toast.success('Password reset email sent! Check your inbox.');
+      } else {
+        toast.error(result.error || 'Failed to send reset email. Please try again.');
+      }
     } catch (error) {
       console.error('Password reset error:', error);
-
-      if (error.code === 'auth/user-not-found') {
-        toast.error('No account found with this email address');
-      } else if (error.code === 'auth/invalid-email') {
-        toast.error('Invalid email address');
-      } else {
-        toast.error('Failed to send reset email. Please try again.');
-      }
+      toast.error('Failed to send reset email. Please try again.');
     } finally {
       setLoading(false);
     }

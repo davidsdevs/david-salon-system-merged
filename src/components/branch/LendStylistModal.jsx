@@ -45,7 +45,7 @@ const LendStylistModal = ({
       
       setFormData({
         fromBranchId: '', // Branch to request help from
-        stylistId: 'any', // Default to "any available"
+        stylistId: '', // No default - user must select
         startDate: today.toISOString().split('T')[0],
         endDate: nextWeek.toISOString().split('T')[0],
         reason: ''
@@ -60,7 +60,7 @@ const LendStylistModal = ({
       fetchStylists(formData.fromBranchId);
     } else {
       setStylists([]);
-      setFormData(prev => ({ ...prev, stylistId: 'any' }));
+      setFormData(prev => ({ ...prev, stylistId: '' }));
     }
   }, [formData.fromBranchId]);
 
@@ -95,10 +95,10 @@ const LendStylistModal = ({
       setStylists(branchStylists);
       
       // Reset stylist selection if previously selected stylist is not in the new list
-      if (formData.stylistId && formData.stylistId !== 'any') {
+      if (formData.stylistId) {
         const stylistExists = branchStylists.some(s => (s.id || s.uid) === formData.stylistId);
         if (!stylistExists) {
-          setFormData(prev => ({ ...prev, stylistId: 'any' }));
+          setFormData(prev => ({ ...prev, stylistId: '' }));
         }
       }
     } catch (error) {
@@ -123,6 +123,11 @@ const LendStylistModal = ({
       return;
     }
 
+    if (!formData.stylistId) {
+      toast.error('Please select a stylist to borrow');
+      return;
+    }
+
     if (!formData.startDate || !formData.endDate) {
       toast.error('Please select start and end dates');
       return;
@@ -144,11 +149,9 @@ const LendStylistModal = ({
     try {
       setSaving(true);
       // Request help: fromBranchId = branch providing help, toBranchId = requesting branch (current)
-      // stylistId: selected stylist ID or null for "any available"
-      const selectedStylistId = formData.stylistId === 'any' ? null : formData.stylistId;
-      
+      // stylistId: selected stylist ID (required)
       await requestLendStylist(
-        selectedStylistId, // Selected stylist ID or null for "any available"
+        formData.stylistId, // Selected stylist ID (required)
         formData.fromBranchId, // Branch that will provide the stylist
         requestingBranchId, // Current branch that needs help
         formData.startDate,
@@ -215,7 +218,7 @@ const LendStylistModal = ({
                 </label>
                 <select
                   value={formData.fromBranchId}
-                  onChange={(e) => setFormData({ ...formData, fromBranchId: e.target.value, stylistId: 'any' })}
+                  onChange={(e) => setFormData({ ...formData, fromBranchId: e.target.value, stylistId: '' })}
                   required
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 >
@@ -239,38 +242,37 @@ const LendStylistModal = ({
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     <User className="inline w-4 h-4 mr-1" />
-                    Select Stylist (Optional)
+                    Select Stylist *
                   </label>
                   {loadingStylists ? (
                     <div className="flex items-center gap-2 text-sm text-gray-500">
                       <LoadingSpinner size="sm" />
                       Loading stylists...
                     </div>
-                  ) : (
+                  ) : stylists.length > 0 ? (
                     <select
                       value={formData.stylistId}
                       onChange={(e) => setFormData({ ...formData, stylistId: e.target.value })}
+                      required
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     >
-                      <option value="any">Any Available Stylist</option>
-                      {stylists.length > 0 ? (
-                        stylists.map(stylist => {
-                          const stylistId = stylist.id || stylist.uid;
-                          return (
-                            <option key={stylistId} value={stylistId}>
-                              {getFullName(stylist)} {stylist.email ? `(${stylist.email})` : ''}
-                            </option>
-                          );
-                        })
-                      ) : (
-                        <option value="any" disabled>No stylists available in this branch</option>
-                      )}
+                      <option value="">-- Select a stylist --</option>
+                      {stylists.map(stylist => {
+                        const stylistId = stylist.id || stylist.uid;
+                        return (
+                          <option key={stylistId} value={stylistId}>
+                            {getFullName(stylist)} {stylist.email ? `(${stylist.email})` : ''}
+                          </option>
+                        );
+                      })}
                     </select>
+                  ) : (
+                    <div className="w-full px-4 py-2 border border-red-300 rounded-lg bg-red-50">
+                      <p className="text-sm text-red-700">No stylists available in this branch</p>
+                    </div>
                   )}
                   <p className="text-xs text-gray-500 mt-1">
-                    {formData.stylistId === 'any' 
-                      ? 'The branch manager will select an available stylist for you.'
-                      : 'You have requested a specific stylist. The branch manager can still assign a different stylist if needed.'}
+                    Select the specific stylist you want to borrow from this branch.
                   </p>
                 </div>
               )}

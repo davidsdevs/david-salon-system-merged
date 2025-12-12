@@ -30,7 +30,7 @@ import {
   CheckCircle,
   XCircle,
   Calendar,
-  DollarSign,
+  Banknote,
   Tag,
   Building,
   Clock,
@@ -182,7 +182,8 @@ const Stocks = () => {
     status: 'all',
     category: 'all',
     stockRange: { min: '', max: '' },
-    lowStock: false
+    lowStock: false,
+    usageType: 'all' // 'all', 'otc', 'salon-use'
   });
 
   // Mock stock data - in real app, this would come from API
@@ -666,6 +667,10 @@ const Stocks = () => {
         const matchesCategory = filters.category === 'all' || 
           (stock.category || product?.category || '') === filters.category;
         
+        // Usage type filter
+        const stockUsageType = stock.usageType || 'otc'; // Default to 'otc' for backward compatibility
+        const matchesUsageType = filters.usageType === 'all' || stockUsageType === filters.usageType;
+        
         const currentStock = stock.realTimeStock || stock.weekFourStock || stock.beginningStock || 0;
         const matchesStockRange = (!filters.stockRange.min || currentStock >= parseFloat(filters.stockRange.min)) &&
                                  (!filters.stockRange.max || currentStock <= parseFloat(filters.stockRange.max));
@@ -673,7 +678,7 @@ const Stocks = () => {
         const minStock = stock.minStock || 0;
         const matchesLowStock = !filters.lowStock || currentStock <= minStock;
         
-        return matchesSearch && matchesStatus && matchesCategory && matchesStockRange && matchesLowStock;
+        return matchesSearch && matchesStatus && matchesCategory && matchesUsageType && matchesStockRange && matchesLowStock;
       })
       .sort((a, b) => {
         const aStock = a.productName || a.product?.name || '';
@@ -1475,7 +1480,7 @@ const Stocks = () => {
 
           <Card className="p-4">
             <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-purple-600" />
+              <Banknote className="h-8 w-8 text-purple-600" />
               <div className="ml-3">
                 <p className="text-sm font-medium text-gray-600">Total Value</p>
                 <p className="text-xl font-bold text-gray-900">₱{stockStats.totalValue.toLocaleString()}</p>
@@ -1873,6 +1878,15 @@ const Stocks = () => {
                 <option value="Low Stock">Low Stock</option>
                 <option value="Out of Stock">Out of Stock</option>
               </select>
+              <select
+                value={filters.usageType}
+                onChange={(e) => setFilters(prev => ({ ...prev, usageType: e.target.value }))}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="all">All Usage Types</option>
+                <option value="otc">OTC Only</option>
+                <option value="salon-use">Salon Use Only</option>
+              </select>
               <Button
                 variant="outline"
                 onClick={() => setIsFilterModalOpen(true)}
@@ -1896,7 +1910,8 @@ const Stocks = () => {
                     status: 'all',
                     category: 'all',
                     stockRange: { min: '', max: '' },
-                    lowStock: false
+                    lowStock: false,
+                    usageType: 'all'
                   });
                   setSearchTerm('');
                   reloadStocks();
@@ -1954,11 +1969,31 @@ const Stocks = () => {
                   <tr key={stock.id || `${stock.productId}-${stock.startPeriod}-${batchId}`} className={`hover:bg-gray-50 ${isBatchStock ? 'bg-blue-50/30' : ''}`}>
                     <td className="px-3 md:px-6 py-4 whitespace-nowrap">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <div className="text-sm font-medium text-gray-900">{productName}</div>
                           {isBatchStock && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
                               Batch: {batchNumber}
+                            </span>
+                          )}
+                          {/* Usage Type Badge - Always show for batch stocks */}
+                          {isBatchStock && (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                              (stock.usageType || 'otc') === 'salon-use'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-green-100 text-green-800 border border-green-200'
+                            }`}>
+                              {(stock.usageType || 'otc') === 'salon-use' ? 'Salon Use' : 'OTC'}
+                            </span>
+                          )}
+                          {/* Usage Type Badge for non-batch stocks */}
+                          {!isBatchStock && stock.usageType && (
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                              stock.usageType === 'salon-use'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-green-100 text-green-800 border border-green-200'
+                            }`}>
+                              {stock.usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
                             </span>
                           )}
                         </div>
@@ -2178,15 +2213,37 @@ const Stocks = () => {
                         {selectedStock.productName || selectedStock.product?.name || 'Unknown Product'}
                       </h2>
                       {(selectedStock.stockType === 'batch' || selectedStock.batchId || selectedStock.batchNumber) && (
-                        <div className="mt-2">
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
                           <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-blue-100 text-blue-800 border border-blue-200">
                             Batch: {selectedStock.batchNumber || 'N/A'}
                           </span>
                           {selectedStock.purchaseOrderId && (
-                            <span className="ml-2 text-xs text-gray-500">
+                            <span className="text-xs text-gray-500">
                               PO: {selectedStock.purchaseOrderId}
                             </span>
                           )}
+                          {/* Usage Type Badge */}
+                          {selectedStock.usageType && (
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold ${
+                              selectedStock.usageType === 'salon-use'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-green-100 text-green-800 border border-green-200'
+                            }`}>
+                              {selectedStock.usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {/* Show usage type even for non-batch stocks */}
+                      {(!selectedStock.stockType || selectedStock.stockType !== 'batch') && selectedStock.usageType && (
+                        <div className="mt-2">
+                          <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold ${
+                            selectedStock.usageType === 'salon-use'
+                              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : 'bg-green-100 text-green-800 border border-green-200'
+                          }`}>
+                            {selectedStock.usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -3697,6 +3754,19 @@ const Stocks = () => {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Usage Type</label>
+                <select
+                  value={filters.usageType}
+                  onChange={(e) => setFilters(prev => ({ ...prev, usageType: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="all">All Usage Types</option>
+                  <option value="otc">OTC Only</option>
+                  <option value="salon-use">Salon Use Only</option>
+                </select>
+              </div>
+
               <div className="flex items-center">
                 <input
                   type="checkbox"
@@ -3716,7 +3786,8 @@ const Stocks = () => {
                   status: 'all',
                   category: 'all',
                   stockRange: { min: '', max: '' },
-                  lowStock: false
+                  lowStock: false,
+                  usageType: 'all'
                 })}>
                   Reset
                 </Button>

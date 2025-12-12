@@ -36,7 +36,7 @@ import {
   Receipt,
   Package,
   ShoppingCart,
-  DollarSign,
+  Banknote,
   Image as ImageIcon
 } from 'lucide-react';
 import { format } from 'date-fns';
