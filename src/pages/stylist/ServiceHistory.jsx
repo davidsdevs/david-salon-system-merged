@@ -4,21 +4,25 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { Calendar, Clock, DollarSign, User, Search, Filter, TrendingUp, Scissors, Users, Phone, Mail, BarChart3 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Calendar, Clock, DollarSign, User, Search, Filter, TrendingUp, Scissors, BarChart3, Users, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { collection, query, where, getDocs, orderBy, Timestamp, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import { getClientById, getClientProfile } from '../../services/clientService';
 import { formatDate, formatTime, formatCurrency, getFullName, getInitials } from '../../utils/helpers';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import toast from 'react-hot-toast';
 
 const StylistServiceHistory = () => {
+  const navigate = useNavigate();
   const { currentUser, userBranch } = useAuth();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateFilter, setDateFilter] = useState('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [showDateRange, setShowDateRange] = useState(false);
   const [serviceFilter, setServiceFilter] = useState('all');
   const [sortBy, setSortBy] = useState('date-desc');
   const [summary, setSummary] = useState({
@@ -30,19 +34,26 @@ const StylistServiceHistory = () => {
     uniqueClients: 0
   });
   const [availableServices, setAvailableServices] = useState([]);
-  const [clientAnalytics, setClientAnalytics] = useState([]);
-  const [loadingClients, setLoadingClients] = useState(false);
 
   useEffect(() => {
     if (currentUser?.uid) {
       fetchTransactions();
     }
-  }, [currentUser, dateFilter]);
+  }, [currentUser, dateFilter, startDate, endDate]);
+
+  // Auto-apply date range when both dates are selected
+  useEffect(() => {
+    if (dateFilter === 'custom' && startDate && endDate) {
+      const timer = setTimeout(() => {
+        setShowDateRange(false);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [startDate, endDate, dateFilter]);
 
   useEffect(() => {
     if (transactions.length > 0) {
       extractServices();
-      calculateClientAnalytics();
     }
   }, [transactions]);
 
@@ -53,7 +64,16 @@ const StylistServiceHistory = () => {
       
       // Build date filter
       let dateQuery = null;
-      if (dateFilter === 'today') {
+      if (dateFilter === 'custom' && startDate && endDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        dateQuery = {
+          start: Timestamp.fromDate(start),
+          end: Timestamp.fromDate(end)
+        };
+      } else if (dateFilter === 'today') {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const tomorrow = new Date(today);
@@ -80,14 +100,14 @@ const StylistServiceHistory = () => {
         };
       }
 
-      // Query transactions by stylist
+      // Query transactions - filter by date if needed, then filter by stylist items in memory
+      // This ensures we don't miss transactions where items have different stylistIds
       let snapshot;
       try {
         let q;
         if (dateQuery) {
           q = query(
             transactionsRef,
-            where('stylistId', '==', currentUser.uid),
             where('createdAt', '>=', dateQuery.start),
             where('createdAt', '<', dateQuery.end),
             orderBy('createdAt', 'desc')
@@ -95,7 +115,6 @@ const StylistServiceHistory = () => {
         } else {
           q = query(
             transactionsRef,
-            where('stylistId', '==', currentUser.uid),
             orderBy('createdAt', 'desc')
           );
         }
@@ -107,15 +126,11 @@ const StylistServiceHistory = () => {
         if (dateQuery) {
           q = query(
             transactionsRef,
-            where('stylistId', '==', currentUser.uid),
             where('createdAt', '>=', dateQuery.start),
             where('createdAt', '<', dateQuery.end)
           );
         } else {
-          q = query(
-            transactionsRef,
-            where('stylistId', '==', currentUser.uid)
-          );
+          q = query(transactionsRef);
         }
         snapshot = await getDocs(q);
       }
@@ -251,84 +266,6 @@ const StylistServiceHistory = () => {
     setAvailableServices(Array.from(servicesSet).sort());
   };
 
-  const calculateClientAnalytics = async () => {
-    try {
-      setLoadingClients(true);
-      const clientMap = new Map();
-
-      // Group transactions by client
-      transactions.forEach(transaction => {
-        if (!transaction.clientId) return;
-        
-        const clientId = transaction.clientId;
-        if (!clientMap.has(clientId)) {
-          clientMap.set(clientId, {
-            clientId,
-            clientName: transaction.clientName || 'Guest Client',
-            transactions: [],
-            totalSpent: 0,
-            totalCommission: 0,
-            serviceCount: 0,
-            lastVisit: null
-          });
-        }
-
-        const clientData = clientMap.get(clientId);
-        const stylistItems = transaction.stylistItems || [];
-        const serviceItems = stylistItems.filter(item => (item.type || 'service') === 'service');
-        
-        if (serviceItems.length > 0) {
-          clientData.transactions.push(transaction);
-          const clientTotal = serviceItems.reduce((sum, item) => {
-            return sum + (item.price || item.adjustedPrice || 0) * (item.quantity || 1);
-          }, 0);
-          const clientCommission = serviceItems.reduce((sum, item) => {
-            if (item.commission !== undefined) {
-              return sum + item.commission;
-            }
-            const itemTotal = (item.price || item.adjustedPrice || 0) * (item.quantity || 1);
-            return sum + (itemTotal * 0.6);
-          }, 0);
-          
-          clientData.totalSpent += clientTotal;
-          clientData.totalCommission += clientCommission;
-          clientData.serviceCount += serviceItems.length;
-          
-          if (!clientData.lastVisit || transaction.createdAt > clientData.lastVisit) {
-            clientData.lastVisit = transaction.createdAt;
-          }
-        }
-      });
-
-      // Fetch client profiles
-      const analytics = await Promise.all(
-        Array.from(clientMap.values()).map(async (clientData) => {
-          try {
-            const client = await getClientById(clientData.clientId);
-            const profile = await getClientProfile(clientData.clientId);
-            return {
-              ...clientData,
-              client: client || null,
-              profile: profile || null,
-              email: client?.email || null,
-              phone: client?.phone || client?.phoneNumber || null
-            };
-          } catch (error) {
-            console.error(`Error fetching client ${clientData.clientId}:`, error);
-            return clientData;
-          }
-        })
-      );
-
-      // Sort by total spent (descending)
-      analytics.sort((a, b) => b.totalSpent - a.totalSpent);
-      setClientAnalytics(analytics);
-    } catch (error) {
-      console.error('Error calculating client analytics:', error);
-    } finally {
-      setLoadingClients(false);
-    }
-  };
 
   const filteredTransactions = useMemo(() => {
     let filtered = [...transactions];
@@ -511,95 +448,6 @@ const StylistServiceHistory = () => {
         </div>
       </div>
 
-      {/* Client Analytics Section */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100">
-        <div className="p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-            <Users className="w-5 h-5 text-primary-600" />
-            Client Analytics
-          </h2>
-          <p className="text-sm text-gray-500 mt-1">Clients you've worked with and their service history</p>
-        </div>
-        {loadingClients ? (
-          <div className="p-12 text-center">
-            <LoadingSpinner size="md" />
-            <p className="text-gray-500 mt-2">Loading client analytics...</p>
-          </div>
-        ) : clientAnalytics.length === 0 ? (
-          <div className="p-12 text-center">
-            <Users className="w-16 h-16 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-500">No client data available</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-100">
-            {clientAnalytics.map((clientData) => (
-              <div key={clientData.clientId} className="p-4 hover:bg-gray-50 transition-colors">
-                <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
-                    {clientData.client?.photoURL || clientData.client?.imageURL ? (
-                      <img 
-                        src={clientData.client.photoURL || clientData.client.imageURL} 
-                        alt={clientData.clientName}
-                        className="w-full h-full rounded-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-primary-600 font-bold text-lg">
-                        {getInitials(clientData.client || { firstName: clientData.clientName })}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{clientData.clientName}</h3>
-                        <div className="flex items-center gap-4 mt-1 text-sm text-gray-600">
-                          {clientData.phone && (
-                            <div className="flex items-center gap-1">
-                              <Phone className="w-4 h-4" />
-                              <span>{clientData.phone}</span>
-                            </div>
-                          )}
-                          {clientData.email && (
-                            <div className="flex items-center gap-1">
-                              <Mail className="w-4 h-4" />
-                              <span className="truncate">{clientData.email}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs text-gray-500">Total Spent</p>
-                        <p className="text-lg font-bold text-primary-600">{formatCurrency(clientData.totalSpent)}</p>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 pt-3 border-t border-gray-200">
-                      <div>
-                        <p className="text-xs text-gray-500">Services</p>
-                        <p className="text-sm font-semibold text-gray-900">{clientData.serviceCount}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Transactions</p>
-                        <p className="text-sm font-semibold text-gray-900">{clientData.transactions.length}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Commission</p>
-                        <p className="text-sm font-semibold text-green-600">{formatCurrency(clientData.totalCommission)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Last Visit</p>
-                        <p className="text-sm font-semibold text-gray-900">
-                          {clientData.lastVisit ? formatDate(clientData.lastVisit) : 'N/A'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* Enhanced Search and Filters */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 space-y-4">
         <div className="flex flex-wrap items-center gap-4">
@@ -613,16 +461,113 @@ const StylistServiceHistory = () => {
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
             />
           </div>
-          <select
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="all">All Time</option>
-            <option value="today">Today</option>
-            <option value="week">Last 7 Days</option>
-            <option value="month">Last 30 Days</option>
-          </select>
+          <div className="relative">
+            <select
+              value={dateFilter}
+              onChange={(e) => {
+                setDateFilter(e.target.value);
+                if (e.target.value !== 'custom') {
+                  setStartDate('');
+                  setEndDate('');
+                  setShowDateRange(false);
+                } else {
+                  setShowDateRange(true);
+                }
+              }}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="all">All Time</option>
+              <option value="today">Today</option>
+              <option value="week">Last 7 Days</option>
+              <option value="month">Last 30 Days</option>
+              <option value="custom">Custom Range</option>
+            </select>
+            
+            {showDateRange && dateFilter === 'custom' && (
+              <div className="absolute top-full left-0 mt-2 bg-white border border-gray-300 rounded-lg shadow-lg p-4 z-50 min-w-[500px]">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-semibold text-gray-900">Select Date Range</h3>
+                  <button
+                    onClick={() => {
+                      setShowDateRange(false);
+                      setDateFilter('all');
+                      setStartDate('');
+                      setEndDate('');
+                    }}
+                    className="text-gray-400 hover:text-gray-600"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Start Date
+                    </label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      max={endDate || undefined}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      End Date
+                    </label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      min={startDate || undefined}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+                {startDate && endDate && (
+                  <div className="mt-3 pt-3 border-t border-gray-200 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setShowDateRange(false);
+                      }}
+                      className="flex-1 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      onClick={() => {
+                        setStartDate('');
+                        setEndDate('');
+                      }}
+                      className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          
+          {dateFilter === 'custom' && startDate && endDate && !showDateRange && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-primary-50 border border-primary-200 rounded-lg text-sm">
+              <Calendar className="w-4 h-4 text-primary-600" />
+              <span className="text-primary-700">
+                {new Date(startDate).toLocaleDateString()} - {new Date(endDate).toLocaleDateString()}
+              </span>
+              <button
+                onClick={() => {
+                  setDateFilter('all');
+                  setStartDate('');
+                  setEndDate('');
+                }}
+                className="ml-2 text-primary-600 hover:text-primary-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
           <select
             value={serviceFilter}
             onChange={(e) => setServiceFilter(e.target.value)}
@@ -671,7 +616,15 @@ const StylistServiceHistory = () => {
               const serviceItems = stylistItems.filter(item => (item.type || 'service') === 'service');
               
               return (
-                <div key={transaction.id} className="p-4 hover:bg-gray-50 transition-colors">
+                <div 
+                  key={transaction.id} 
+                  className="p-4 hover:bg-gray-50 transition-all cursor-pointer border-l-4 border-transparent hover:border-primary-500 hover:shadow-sm"
+                  onClick={() => {
+                    if (transaction.clientId) {
+                      navigate(`/stylist/client-analytics/${transaction.clientId}`);
+                    }
+                  }}
+                >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
@@ -682,6 +635,9 @@ const StylistServiceHistory = () => {
                           <h3 className="font-semibold text-gray-900">{transaction.clientName || 'Guest Client'}</h3>
                           <p className="text-sm text-gray-500">
                             Transaction #{transaction.receiptNumber || transaction.id.substring(0, 8)}
+                            {transaction.clientId && (
+                              <span className="ml-2 text-xs text-primary-600 font-medium">→ Click to view client analytics</span>
+                            )}
                           </p>
                         </div>
                       </div>
@@ -727,7 +683,13 @@ const StylistServiceHistory = () => {
                         <div className="flex items-center gap-4 pt-2 border-t border-gray-200">
                           <div>
                             <p className="text-xs text-gray-500">Total Sale</p>
-                            <p className="text-lg font-bold text-gray-900">{formatCurrency(transaction.total || 0)}</p>
+                            <p className="text-lg font-bold text-gray-900">
+                              {formatCurrency(
+                                stylistItems.reduce((sum, item) => {
+                                  return sum + (item.price || item.adjustedPrice || 0) * (item.quantity || 1);
+                                }, 0)
+                              )}
+                            </p>
                           </div>
                           {commission > 0 && (
                             <div>

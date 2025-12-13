@@ -285,38 +285,50 @@ const StylistDashboard = () => {
           Today's Client Types
         </h2>
         <div className="grid grid-cols-3 gap-4">
-          <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+          {/* X-New - Yellow/Amber (matching mobile) */}
+          <div 
+            className="rounded-lg p-4 border"
+            style={{ backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }}
+          >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-blue-600 font-medium">X-New</p>
-                <p className="text-2xl font-bold text-blue-700 mt-1">{clientTypeStats.X}</p>
+                <p className="text-sm font-medium" style={{ color: '#92400E' }}>X-New</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: '#92400E' }}>{clientTypeStats.X}</p>
               </div>
-              <div className="p-2 bg-blue-100 rounded-full">
-                <Tag className="w-5 h-5 text-blue-600" />
+              <div className="p-2 rounded-full" style={{ backgroundColor: '#FDE68A' }}>
+                <Tag className="w-5 h-5" style={{ color: '#92400E' }} />
               </div>
             </div>
           </div>
           
-          <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+          {/* R-Regular - Pink (matching mobile) */}
+          <div 
+            className="rounded-lg p-4 border"
+            style={{ backgroundColor: '#FCE7F3', borderColor: '#FBCFE8' }}
+          >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-purple-600 font-medium">R-Regular</p>
-                <p className="text-2xl font-bold text-purple-700 mt-1">{clientTypeStats.R}</p>
+                <p className="text-sm font-medium" style={{ color: '#9F1239' }}>R-Regular</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: '#9F1239' }}>{clientTypeStats.R}</p>
               </div>
-              <div className="p-2 bg-purple-100 rounded-full">
-                <Tag className="w-5 h-5 text-purple-600" />
+              <div className="p-2 rounded-full" style={{ backgroundColor: '#FBCFE8' }}>
+                <Tag className="w-5 h-5" style={{ color: '#9F1239' }} />
               </div>
             </div>
           </div>
           
-          <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
+          {/* TR-Transfer - Teal (matching mobile) */}
+          <div 
+            className="rounded-lg p-4 border"
+            style={{ backgroundColor: '#CCFBF1', borderColor: '#99F6E4' }}
+          >
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-orange-600 font-medium">TR-Transfer</p>
-                <p className="text-2xl font-bold text-orange-700 mt-1">{clientTypeStats.TR}</p>
+                <p className="text-sm font-medium" style={{ color: '#115E59' }}>TR-Transfer</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: '#115E59' }}>{clientTypeStats.TR}</p>
               </div>
-              <div className="p-2 bg-orange-100 rounded-full">
-                <Tag className="w-5 h-5 text-orange-600" />
+              <div className="p-2 rounded-full" style={{ backgroundColor: '#99F6E4' }}>
+                <Tag className="w-5 h-5" style={{ color: '#115E59' }} />
               </div>
             </div>
           </div>

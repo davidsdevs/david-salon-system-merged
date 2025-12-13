@@ -323,18 +323,31 @@ const StylistCheckIns = () => {
     }
     
     // Check service clientType (X-New, R-Regular, TR-Transfer, etc.)
+    // Using mobile app colors for consistency
     if (checkIn.services && Array.isArray(checkIn.services) && checkIn.services.length > 0) {
       // Get clientType from first service (usually all services have same clientType)
       const clientType = checkIn.services[0]?.clientType;
       if (clientType) {
         if (clientType === 'X' || clientType === 'X-New' || clientType.startsWith('X')) {
-          return { label: 'X-New', color: 'bg-blue-100 text-blue-700 border-blue-200' };
+          return { 
+            label: 'X-New', 
+            color: 'border-[#FDE68A]',
+            style: { backgroundColor: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A' }
+          };
         }
         if (clientType === 'R' || clientType === 'R-Regular' || clientType.startsWith('R')) {
-          return { label: 'R-Regular', color: 'bg-purple-100 text-purple-700 border-purple-200' };
+          return { 
+            label: 'R-Regular', 
+            color: 'border-[#FBCFE8]',
+            style: { backgroundColor: '#FCE7F3', color: '#9F1239', borderColor: '#FBCFE8' }
+          };
         }
         if (clientType === 'TR' || clientType.startsWith('TR')) {
-          return { label: 'TR-Transfer', color: 'bg-orange-100 text-orange-700 border-orange-200' };
+          return { 
+            label: 'TR-Transfer', 
+            color: 'border-[#99F6E4]',
+            style: { backgroundColor: '#CCFBF1', color: '#115E59', borderColor: '#99F6E4' }
+          };
         }
         // Return the clientType as-is if it doesn't match known patterns
         return { label: clientType, color: 'bg-indigo-100 text-indigo-700 border-indigo-200' };
@@ -345,13 +358,25 @@ const StylistCheckIns = () => {
     if (checkIn.clientType) {
       const clientType = checkIn.clientType;
       if (clientType === 'X' || clientType === 'X-New' || clientType.startsWith('X')) {
-        return { label: 'X-New', color: 'bg-blue-100 text-blue-700 border-blue-200' };
+        return { 
+          label: 'X-New', 
+          color: 'border-[#FDE68A]',
+          style: { backgroundColor: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A' }
+        };
       }
       if (clientType === 'R' || clientType === 'R-Regular' || clientType.startsWith('R')) {
-        return { label: 'R-Regular', color: 'bg-purple-100 text-purple-700 border-purple-200' };
+        return { 
+          label: 'R-Regular', 
+          color: 'border-[#FBCFE8]',
+          style: { backgroundColor: '#FCE7F3', color: '#9F1239', borderColor: '#FBCFE8' }
+        };
       }
       if (clientType === 'TR' || clientType.startsWith('TR')) {
-        return { label: 'TR-Transfer', color: 'bg-orange-100 text-orange-700 border-orange-200' };
+        return { 
+          label: 'TR-Transfer', 
+          color: 'border-[#99F6E4]',
+          style: { backgroundColor: '#CCFBF1', color: '#115E59', borderColor: '#99F6E4' }
+        };
       }
       return { label: clientType, color: 'bg-indigo-100 text-indigo-700 border-indigo-200' };
     }
@@ -445,7 +470,10 @@ const StylistCheckIns = () => {
                           {(() => {
                             const clientType = getClientType(checkIn);
                             return (
-                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${clientType.color}`}>
+                              <span 
+                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${clientType.color || ''}`}
+                                style={clientType.style || {}}
+                              >
                                 {clientType.label}
                               </span>
                             );

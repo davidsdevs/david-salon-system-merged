@@ -113,6 +113,8 @@ export const ROUTES = {
   STYLIST_APPOINTMENTS: '/stylist/appointments',
   STYLIST_SCHEDULE: '/stylist/schedule',
   STYLIST_CLIENTS: '/stylist/clients',
+  STYLIST_SERVICE_HISTORY: '/stylist/service-history',
+  STYLIST_CLIENT_ANALYTICS: '/stylist/client-analytics/:clientId',
   
   // Client
   CLIENT_DASHBOARD: '/client',

@@ -92,6 +92,7 @@ import StylistProfile from '../pages/stylist/Profile';
 import StylistMySchedule from '../pages/stylist/MySchedule';
 import StylistPortfolio from '../pages/stylist/Portfolio';
 import StylistNotifications from '../pages/stylist/Notifications';
+import StylistClientAnalyticsDetail from '../pages/stylist/ClientAnalyticsDetail';
 import ClientDashboard from '../pages/client/Dashboard';
 import ClientAppointments from '../pages/client/Appointments';
 import ClientProducts from '../pages/client/Products';
@@ -330,6 +331,7 @@ const AppRoutes = () => {
         <Route path="appointments" element={<StylistAppointments />} />
         <Route path="check-ins" element={<StylistCheckIns />} />
         <Route path="service-history" element={<StylistServiceHistory />} />
+        <Route path="client-analytics/:clientId" element={<StylistClientAnalyticsDetail />} />
         <Route path="leave-management" element={<StylistLeaveManagement />} />
         <Route path="schedule" element={<StylistMySchedule />} />
         <Route path="portfolio" element={<StylistPortfolio />} />
