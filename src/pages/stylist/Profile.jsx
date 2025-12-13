@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { User, Mail, Phone, Building2, Scissors, DollarSign, Users, Calendar, Edit2, Camera, Upload, Clock, Image } from 'lucide-react';
+import { User, Mail, Phone, Building2, Scissors, DollarSign, Users, Calendar, Edit2, Camera, Upload, Clock } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { ROUTES } from '../../utils/constants';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
@@ -498,40 +498,6 @@ const StylistProfile = () => {
                   />
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Quick Actions */}
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <button
-                type="button"
-                onClick={() => navigate(ROUTES.STYLIST_SCHEDULE)}
-                className="flex items-center gap-4 p-4 bg-white border-2 border-gray-200 rounded-lg hover:border-primary-500 hover:bg-primary-50 transition-all group"
-              >
-                <div className="p-3 bg-primary-100 rounded-lg group-hover:bg-primary-200 transition-colors">
-                  <Clock className="w-6 h-6 text-primary-600" />
-                </div>
-                <div className="flex-1 text-left">
-                  <h4 className="font-semibold text-gray-900">My Schedule</h4>
-                  <p className="text-sm text-gray-600">View your weekly schedule and shifts</p>
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => navigate('/stylist/portfolio')}
-                className="flex items-center gap-4 p-4 bg-white border-2 border-gray-200 rounded-lg hover:border-primary-500 hover:bg-primary-50 transition-all group"
-              >
-                <div className="p-3 bg-primary-100 rounded-lg group-hover:bg-primary-200 transition-colors">
-                  <Image className="w-6 h-6 text-primary-600" />
-                </div>
-                <div className="flex-1 text-left">
-                  <h4 className="font-semibold text-gray-900">My Portfolio</h4>
-                  <p className="text-sm text-gray-600">Upload and manage your portfolio images</p>
-                </div>
-              </button>
             </div>
           </div>
 

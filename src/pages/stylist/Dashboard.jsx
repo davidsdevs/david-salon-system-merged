@@ -377,8 +377,8 @@ const StylistDashboard = () => {
       )}
 
       {/* Today's Schedule */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100">
-        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+      <div>
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-900">Today's Schedule</h2>
           <button
             onClick={() => navigate(ROUTES.STYLIST_APPOINTMENTS)}
@@ -389,49 +389,83 @@ const StylistDashboard = () => {
           </button>
         </div>
         
-        <div className="divide-y divide-gray-100">
-          {todayAppointments.length === 0 ? (
-            <div className="p-8 text-center">
-              <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500">No appointments scheduled for today</p>
-            </div>
-          ) : (
-            todayAppointments.slice(0, 5).map((appointment) => (
-              <div key={appointment.id} className="p-4 hover:bg-gray-50 transition-colors">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="text-center min-w-[60px]">
-                      <p className="text-lg font-semibold text-gray-900">
-                        {formatTime(appointment.appointmentDate)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        {appointment.clientName || 'Guest Client'}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        {appointment.services?.map(s => s.serviceName).join(', ') || appointment.serviceName || 'Service'}
-                      </p>
+        {todayAppointments.length === 0 ? (
+          <div className="p-12 text-center bg-white rounded-lg border border-gray-100">
+            <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500">No appointments scheduled for today</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {todayAppointments.slice(0, 5).map((appointment) => {
+              // Get services assigned to this stylist
+              const myServices = appointment.services && appointment.services.length > 0
+                ? appointment.services.filter(svc => svc.stylistId === currentUser.uid)
+                : [];
+
+              return (
+                <div 
+                  key={appointment.id} 
+                  onClick={() => navigate(ROUTES.STYLIST_APPOINTMENTS)}
+                  className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm hover:border-primary-300 transition-all cursor-pointer"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-3">
+                        <h3 className="font-semibold text-gray-900 truncate">
+                          {appointment.clientName || 'Guest Client'}
+                        </h3>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(appointment.status)}`}>
+                          {getStatusLabel(appointment.status)}
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        {myServices.length > 0 ? (
+                          <div className="text-sm text-gray-700">
+                            {myServices.map((service, index) => (
+                              <div key={index} className="text-gray-900 font-medium">
+                                {service.serviceName || 'Unknown Service'}
+                              </div>
+                            ))}
+                          </div>
+                        ) : appointment.services?.length > 0 ? (
+                          <div className="text-sm text-gray-900 font-medium">
+                            {appointment.services.map(s => s.serviceName).join(', ')}
+                          </div>
+                        ) : appointment.serviceName ? (
+                          <div className="text-sm text-gray-900 font-medium">
+                            {appointment.serviceName}
+                          </div>
+                        ) : null}
+
+                        <div className="flex items-center gap-4 text-sm text-gray-600">
+                          <div className="flex items-center gap-1">
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>{formatDate(appointment.appointmentDate)}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>{formatTime(appointment.appointmentDate)}</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(appointment.status)}`}>
-                    {getStatusLabel(appointment.status)}
-                  </span>
                 </div>
+              );
+            })}
+            {todayAppointments.length > 5 && (
+              <div className="pt-2 text-center">
+                <button
+                  onClick={() => navigate(ROUTES.STYLIST_APPOINTMENTS)}
+                  className="text-primary-600 hover:text-primary-700 text-sm font-medium"
+                >
+                  +{todayAppointments.length - 5} more appointments
+                </button>
               </div>
-            ))
-          )}
-          {todayAppointments.length > 5 && (
-            <div className="p-3 text-center">
-              <button
-                onClick={() => navigate(ROUTES.STYLIST_APPOINTMENTS)}
-                className="text-primary-600 hover:text-primary-700 text-sm font-medium"
-              >
-                +{todayAppointments.length - 5} more appointments
-              </button>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

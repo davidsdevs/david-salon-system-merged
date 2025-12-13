@@ -438,182 +438,111 @@ const StylistCheckIns = () => {
       </div>
 
       {/* Check-Ins List */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100">
-        <div className="p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Today's Check-Ins ({filteredCheckIns.length})
-          </h2>
-        </div>
-        <div className="divide-y divide-gray-100">
-          {filteredCheckIns.length === 0 ? (
-            <div className="p-12 text-center">
-              <User className="w-16 h-16 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500">No check-ins found</p>
-              <p className="text-sm text-gray-400 mt-1">
-                {searchTerm || statusFilter !== 'all'
-                  ? 'Try adjusting your filters'
-                  : 'No clients have checked in yet today'}
-              </p>
-            </div>
-          ) : (
-            filteredCheckIns.map((checkIn) => (
-              <div key={checkIn.id} className="p-4 hover:bg-gray-50 transition-colors">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center">
-                        <User className="w-5 h-5 text-primary-600" />
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          Today's Check-Ins ({filteredCheckIns.length})
+        </h2>
+        {filteredCheckIns.length === 0 ? (
+          <div className="p-12 text-center bg-white rounded-lg border border-gray-100">
+            <User className="w-16 h-16 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500">No check-ins found</p>
+            <p className="text-sm text-gray-400 mt-1">
+              {searchTerm || statusFilter !== 'all'
+                ? 'Try adjusting your filters'
+                : 'No clients have checked in yet today'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredCheckIns.map((checkIn) => {
+              // Get services assigned to this stylist
+              const myServices = checkIn.services && Array.isArray(checkIn.services) && checkIn.services.length > 0
+                ? checkIn.services.filter(svc => svc.stylistId === currentUser.uid)
+                : [];
+
+              return (
+                <div 
+                  key={checkIn.id} 
+                  onClick={() => {
+                    setSelectedCheckIn(checkIn);
+                    setShowDetailsModal(true);
+                  }}
+                  className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm hover:border-primary-300 transition-all cursor-pointer"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-3 flex-wrap">
+                        <h3 className="font-semibold text-gray-900 truncate">
+                          {checkIn.clientName || 'Guest Client'}
+                        </h3>
+                        {(() => {
+                          const clientType = getClientType(checkIn);
+                          return (
+                            <span 
+                              className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${clientType.color || ''}`}
+                              style={clientType.style || {}}
+                            >
+                              {clientType.label}
+                            </span>
+                          );
+                        })()}
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(checkIn.status)}`}>
+                          {getStatusLabel(checkIn.status)}
+                        </span>
                       </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <h3 className="font-semibold text-gray-900">{checkIn.clientName || 'Guest Client'}</h3>
-                          {(() => {
-                            const clientType = getClientType(checkIn);
-                            return (
-                              <span 
-                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${clientType.color || ''}`}
-                                style={clientType.style || {}}
-                              >
-                                {clientType.label}
-                              </span>
-                            );
-                          })()}
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(checkIn.status)}`}>
-                            {getStatusLabel(checkIn.status)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div className="ml-13 space-y-3">
-                      {/* Services - Must See */}
-                      <div>
-                        <div className="flex items-center gap-2 mb-2">
-                          <Scissors className="w-4 h-4 text-primary-600" />
-                          <span className="text-sm font-semibold text-gray-900">Services</span>
-                        </div>
-                        {checkIn.services && Array.isArray(checkIn.services) && checkIn.services.length > 0 ? (
-                          <div className="space-y-2">
-                            {checkIn.services.map((service, index) => {
-                              const isMyService = service.stylistId === currentUser.uid;
-                              return (
-                                <div 
-                                  key={index} 
-                                  className={`rounded-lg p-3 border-2 ${
-                                    isMyService 
-                                      ? 'bg-primary-100 border-primary-400' 
-                                      : 'bg-gray-50 border-gray-200'
-                                  }`}
-                                >
-                                  <div className="flex items-start justify-between">
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2">
-                                        <div className={`font-semibold text-sm ${
-                                          isMyService ? 'text-primary-900' : 'text-gray-900'
-                                        }`}>
-                                          {service.serviceName || 'Unknown Service'}
-                                        </div>
-                                        {isMyService && (
-                                          <span className="px-2 py-0.5 bg-primary-600 text-white text-xs rounded-full font-medium">
-                                            Your Service
-                                          </span>
-                                        )}
-                                      </div>
-                                      {service.price && (
-                                        <div className={`text-xs mt-1 ${
-                                          isMyService ? 'text-primary-700' : 'text-gray-600'
-                                        }`}>
-                                          ₱{parseFloat(service.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                        </div>
-                                      )}
-                                    </div>
-                                    {service.stylistName && service.stylistId !== currentUser.uid && (
-                                      <div className="text-xs text-gray-500 ml-2">
-                                        {service.stylistName}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
+                      
+                      <div className="space-y-2">
+                        {myServices.length > 0 ? (
+                          <div className="text-sm text-gray-700">
+                            {myServices.map((service, index) => (
+                              <div key={index} className="text-gray-900 font-medium">
+                                {service.serviceName || 'Unknown Service'}
+                              </div>
+                            ))}
+                          </div>
+                        ) : checkIn.services && Array.isArray(checkIn.services) && checkIn.services.length > 0 ? (
+                          <div className="text-sm text-gray-700">
+                            {checkIn.services.map((service, index) => (
+                              <div key={index} className="text-gray-900 font-medium">
+                                {service.serviceName || 'Unknown Service'}
+                              </div>
+                            ))}
                           </div>
                         ) : checkIn.serviceName ? (
-                          <div className="bg-primary-100 border-2 border-primary-400 rounded-lg p-3">
-                            <div className="flex items-center gap-2">
-                              <div className="font-semibold text-primary-900 text-sm">
-                                {checkIn.serviceName}
-                              </div>
-                              <span className="px-2 py-0.5 bg-primary-600 text-white text-xs rounded-full font-medium">
-                                Your Service
-                              </span>
-                            </div>
-                            {checkIn.servicePrice && (
-                              <div className="text-xs text-primary-700 mt-1">
-                                ₱{parseFloat(checkIn.servicePrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </div>
-                            )}
+                          <div className="text-sm text-gray-900 font-medium">
+                            {checkIn.serviceName}
                           </div>
-                        ) : (
-                          <div className="text-sm text-gray-500 italic">No services listed</div>
-                        )}
-                      </div>
+                        ) : null}
 
-                      <div className="space-y-2 pt-2 border-t border-gray-200">
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Clock className="w-4 h-4" />
-                          <span>Arrived: {formatTime(checkIn.arrivedAt)}</span>
-                          <span className="text-gray-400">•</span>
-                          <span>{formatDate(checkIn.arrivedAt)}</span>
+                        <div className="flex items-center gap-4 text-sm text-gray-600">
+                          <div className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>Arrived: {formatTime(checkIn.arrivedAt)}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>{formatDate(checkIn.arrivedAt)}</span>
+                          </div>
                         </div>
-                        
-                        {checkIn.clientPhone && (
-                          <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <Phone className="w-4 h-4" />
-                            <a href={`tel:${checkIn.clientPhone}`} className="text-primary-600 hover:underline">
-                              {checkIn.clientPhone}
-                            </a>
-                          </div>
-                        )}
-                        
-                        {checkIn.clientEmail && (
-                          <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <Mail className="w-4 h-4" />
-                            <a href={`mailto:${checkIn.clientEmail}`} className="text-primary-600 hover:underline truncate">
-                              {checkIn.clientEmail}
-                            </a>
-                          </div>
-                        )}
-
-                        {checkIn.appointmentId && (
-                          <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <Calendar className="w-4 h-4" />
-                            <span>Appointment ID: {checkIn.appointmentId.substring(0, 8)}...</span>
-                          </div>
-                        )}
-
-                        {checkIn.notes && (
-                          <div className="mt-2 p-2 bg-gray-50 rounded text-sm text-gray-700">
-                            <strong>Notes:</strong> {checkIn.notes}
-                          </div>
-                        )}
                       </div>
                     </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedCheckIn(checkIn);
+                        setShowDetailsModal(true);
+                      }}
+                      className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors flex-shrink-0"
+                      title="View Full Details"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => {
-                      setSelectedCheckIn(checkIn);
-                      setShowDetailsModal(true);
-                    }}
-                    className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                    title="View Full Details"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </button>
                 </div>
-              </div>
-            ))
-          )}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Check-In Details Modal */}

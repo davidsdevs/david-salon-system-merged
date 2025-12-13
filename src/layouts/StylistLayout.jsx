@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
-import { LayoutDashboard, Calendar, CalendarDays, User, CheckCircle, History, Bell } from 'lucide-react';
+import { LayoutDashboard, Calendar, CalendarDays, User, CheckCircle, History, Bell, Clock, Image } from 'lucide-react';
 import Header from '../components/layout/Header';
 import Sidebar from '../components/layout/Sidebar';
 import { ROUTES } from '../utils/constants';
@@ -19,6 +19,8 @@ const StylistLayout = () => {
     { path: '/stylist/check-ins', label: 'Check-Ins', icon: CheckCircle },
     { path: '/stylist/service-history', label: 'Service History', icon: History },
     { path: '/stylist/leave-management', label: 'Leave Requests', icon: CalendarDays },
+    { path: ROUTES.STYLIST_SCHEDULE, label: 'My Schedule', icon: Clock },
+    { path: '/stylist/portfolio', label: 'Portfolio', icon: Image },
     { section: 'Account' },
     { path: '/stylist/profile', label: 'My Profile', icon: User },
   ];

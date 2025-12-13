@@ -592,109 +592,93 @@ const StylistServiceHistory = () => {
       </div>
 
       {/* Transactions List */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100">
-        <div className="p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-gray-900">
-            Transactions ({filteredTransactions.length})
-          </h2>
-        </div>
-        <div className="divide-y divide-gray-100">
-          {filteredTransactions.length === 0 ? (
-            <div className="p-12 text-center">
-              <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500">No transactions found</p>
-              <p className="text-sm text-gray-400 mt-1">
-                {searchTerm || dateFilter !== 'all' || serviceFilter !== 'all'
-                  ? 'Try adjusting your filters'
-                  : 'No completed services yet'}
-              </p>
-            </div>
-          ) : (
-            filteredTransactions.map((transaction) => {
+      <div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          Transactions ({filteredTransactions.length})
+        </h2>
+        {filteredTransactions.length === 0 ? (
+          <div className="p-12 text-center bg-white rounded-lg border border-gray-100">
+            <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500">No transactions found</p>
+            <p className="text-sm text-gray-400 mt-1">
+              {searchTerm || dateFilter !== 'all' || serviceFilter !== 'all'
+                ? 'Try adjusting your filters'
+                : 'No completed services yet'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredTransactions.map((transaction) => {
               const commission = calculateCommission(transaction);
               const stylistItems = getStylistItems(transaction);
-              const serviceItems = stylistItems.filter(item => (item.type || 'service') === 'service');
+              const totalSale = stylistItems.reduce((sum, item) => {
+                return sum + (item.price || item.adjustedPrice || 0) * (item.quantity || 1);
+              }, 0);
               
               return (
                 <div 
                   key={transaction.id} 
-                  className="p-4 hover:bg-gray-50 transition-all cursor-pointer border-l-4 border-transparent hover:border-primary-500 hover:shadow-sm"
                   onClick={() => {
                     if (transaction.clientId) {
                       navigate(`/stylist/client-analytics/${transaction.clientId}`);
                     }
                   }}
+                  className="bg-white rounded-lg border border-gray-200 p-4 hover:shadow-sm hover:border-primary-300 transition-all cursor-pointer"
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center">
-                          <User className="w-5 h-5 text-primary-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-semibold text-gray-900">{transaction.clientName || 'Guest Client'}</h3>
-                          <p className="text-sm text-gray-500">
-                            Transaction #{transaction.receiptNumber || transaction.id.substring(0, 8)}
-                            {transaction.clientId && (
-                              <span className="ml-2 text-xs text-primary-600 font-medium">→ Click to view client analytics</span>
-                            )}
-                          </p>
-                        </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-3">
+                        <h3 className="font-semibold text-gray-900 truncate">
+                          {transaction.clientName || 'Guest Client'}
+                        </h3>
+                        {transaction.clientId && (
+                          <span className="text-xs text-primary-600 font-medium">→ View Analytics</span>
+                        )}
                       </div>
                       
-                      <div className="ml-13 space-y-2">
-                        <div className="flex items-center gap-4 text-sm text-gray-600">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="w-4 h-4" />
-                            {formatDate(transaction.createdAt)}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-4 h-4" />
-                            {formatTime(transaction.createdAt)}
-                          </span>
-                        </div>
-                        
+                      <div className="space-y-2">
                         {stylistItems.length > 0 && (
-                          <div className="mt-2">
-                            <p className="text-sm font-medium text-gray-700 mb-1">Services & Products:</p>
-                            <div className="space-y-1">
-                              {stylistItems.map((item, idx) => {
-                                const itemType = item.type || 'service';
-                                const itemName = item.name || item.serviceName || item.productName || 'Item';
-                                const itemPrice = item.price || item.adjustedPrice || 0;
-                                const itemQuantity = item.quantity || 1;
-                                const itemTotal = itemPrice * itemQuantity;
-                                
-                                return (
-                                  <div key={idx} className="text-sm text-gray-600 flex items-center justify-between">
-                                    <span>
-                                      {itemName}
-                                      {itemQuantity > 1 && ` (x${itemQuantity})`}
-                                      {itemType === 'product' && <span className="ml-2 text-xs text-gray-400">[Product]</span>}
-                                    </span>
-                                    <span className="font-medium">{formatCurrency(itemTotal)}</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                          <div className="text-sm text-gray-700">
+                            {stylistItems.slice(0, 2).map((item, idx) => {
+                              const itemName = item.name || item.serviceName || item.productName || 'Item';
+                              const itemQuantity = item.quantity || 1;
+                              return (
+                                <div key={idx} className="text-gray-900 font-medium">
+                                  {itemName}
+                                  {itemQuantity > 1 && ` (x${itemQuantity})`}
+                                </div>
+                              );
+                            })}
+                            {stylistItems.length > 2 && (
+                              <div className="text-gray-500 text-xs">
+                                +{stylistItems.length - 2} more
+                              </div>
+                            )}
                           </div>
                         )}
+
+                        <div className="flex items-center gap-4 text-sm text-gray-600">
+                          <div className="flex items-center gap-1">
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>{formatDate(transaction.createdAt)}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>{formatTime(transaction.createdAt)}</span>
+                          </div>
+                        </div>
 
                         <div className="flex items-center gap-4 pt-2 border-t border-gray-200">
                           <div>
                             <p className="text-xs text-gray-500">Total Sale</p>
-                            <p className="text-lg font-bold text-gray-900">
-                              {formatCurrency(
-                                stylistItems.reduce((sum, item) => {
-                                  return sum + (item.price || item.adjustedPrice || 0) * (item.quantity || 1);
-                                }, 0)
-                              )}
+                            <p className="text-base font-bold text-gray-900">
+                              {formatCurrency(totalSale)}
                             </p>
                           </div>
                           {commission > 0 && (
                             <div>
                               <p className="text-xs text-gray-500">Commission</p>
-                              <p className="text-lg font-bold text-green-600">{formatCurrency(commission)}</p>
+                              <p className="text-base font-bold text-green-600">{formatCurrency(commission)}</p>
                             </div>
                           )}
                         </div>
@@ -703,9 +687,9 @@ const StylistServiceHistory = () => {
                   </div>
                 </div>
               );
-            })
-          )}
-        </div>
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
