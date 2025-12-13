@@ -44,9 +44,12 @@ const generateToken = () => {
  */
 export const createPasswordResetToken = async (email) => {
   try {
+    // Normalize email (trim and lowercase) for consistency
+    const normalizedEmail = email.trim().toLowerCase();
+    
     // Find user by email
     const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('email', '==', email));
+    const q = query(usersRef, where('email', '==', normalizedEmail));
     const snapshot = await getDocs(q);
     
     if (snapshot.empty) {
@@ -77,7 +80,7 @@ export const createPasswordResetToken = async (email) => {
     const tokenRef = doc(db, RESET_TOKENS_COLLECTION, token);
     await setDoc(tokenRef, {
       userId,
-      email,
+      email: normalizedEmail,
       createdAt: Timestamp.now(),
       expiresAt: Timestamp.fromDate(expiresAt),
       used: false
@@ -87,8 +90,8 @@ export const createPasswordResetToken = async (email) => {
     const baseUrl = window.location.origin;
     const resetLink = `${baseUrl}/reset-password?token=${token}`;
     
-    // Send email with reset link
-    const emailResult = await sendPasswordResetEmail(email, userData.firstName || userData.displayName || 'User', resetLink);
+    // Send email with reset link (use normalized email for consistency)
+    const emailResult = await sendPasswordResetEmail(normalizedEmail, userData.firstName || userData.displayName || 'User', resetLink);
     
     if (!emailResult.success) {
       // Delete token if email failed
@@ -106,7 +109,7 @@ export const createPasswordResetToken = async (email) => {
         performedBy: userId,
         targetUser: userId,
         metadata: {
-          email,
+          email: normalizedEmail,
           method: 'email'
         }
       });

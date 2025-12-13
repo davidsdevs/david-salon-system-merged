@@ -173,13 +173,8 @@ export default function BranchServicesPage() {
                       <span>{service.duration}</span>
                     </div>
                     <div className="flex items-center gap-1">
-<<<<<<< HEAD
-                      <DollarSign className="w-4 h-4" />
-                      <span className="font-poppins font-semibold text-[#160B53]">{service.price == null ? (service.branchPricing || '—') : service.price}</span>
-=======
                       <Banknote className="w-4 h-4" />
-                      <span className="font-poppins font-semibold text-[#160B53]">{service.price}</span>
->>>>>>> 7713a9f67f1c6565bd01262aaa6791d868a6e940
+                      <span className="font-poppins font-semibold text-[#160B53]">{service.price == null ? (service.branchPricing || '—') : service.price}</span>
                     </div>
                   </div>
                   

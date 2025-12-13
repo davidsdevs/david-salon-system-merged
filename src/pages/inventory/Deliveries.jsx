@@ -314,21 +314,7 @@ const Deliveries = () => {
         receivedByName: (userData.firstName && userData.lastName 
           ? `${userData.firstName} ${userData.lastName}`.trim() 
           : (userData.email || 'Unknown')),
-<<<<<<< HEAD
-        items: selectedOrder.items.map(item => {
-          const orderedQty = item.quantity || 0;
-          const receivedQty = receivedQuantities[item.productId] || 0;
-          return {
-            productId: item.productId,
-            productName: item.productName,
-            sku: item.sku || null,
-            quantity: receivedQty,
-            unitPrice: item.unitPrice || 0
-          };
-        }).filter(item => item.quantity > 0), // Only include items with received quantity > 0
-=======
         items: deliveryItems,
->>>>>>> 7713a9f67f1c6565bd01262aaa6791d868a6e940
         receivedAt: new Date()
       });
 

@@ -125,9 +125,12 @@ export const getUserByEmail = async (email) => {
  */
 export const createUser = async (userData, currentUser) => {
   try {
+    // Normalize email (trim and lowercase) for consistency
+    const normalizedEmail = userData.email.trim().toLowerCase();
+    
     // Check if email already exists
     const usersRef = collection(db, 'users');
-    const emailQuery = query(usersRef, where('email', '==', userData.email));
+    const emailQuery = query(usersRef, where('email', '==', normalizedEmail));
     const existingUsers = await getDocs(emailQuery);
     
     if (!existingUsers.empty) {
@@ -156,7 +159,7 @@ export const createUser = async (userData, currentUser) => {
     
     // Create Firestore user document
     const userDocData = {
-      email: userData.email,
+      email: normalizedEmail,
       firstName: userData.firstName,
       middleName: userData.middleName || '',
       lastName: userData.lastName,

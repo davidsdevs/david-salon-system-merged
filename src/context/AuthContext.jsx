@@ -123,8 +123,11 @@ export const AuthProvider = ({ children }) => {
       // Note: We don't clear session here anymore - sessionStorage is tab-specific
       // This allows multiple simultaneous sessions (e.g., Branch Manager in one tab, System Admin in another)
       
+      // Normalize email (trim and lowercase) to match how emails are stored/queried
+      const normalizedEmail = email.trim().toLowerCase();
+      
       // Find user by email
-      const usersQuery = query(collection(db, 'users'), where('email', '==', email));
+      const usersQuery = query(collection(db, 'users'), where('email', '==', normalizedEmail));
       const usersSnapshot = await getDocs(usersQuery);
       
       if (usersSnapshot.empty) {
@@ -157,33 +160,27 @@ export const AuthProvider = ({ children }) => {
       // If no role password exists, try Firebase Auth as fallback (backward compatibility)
       // This handles existing users who registered before role passwords were implemented
       if (!hasRolePassword) {
-        // Only allow fallback for CLIENT role users
-        if (roleToCheck === USER_ROLES.CLIENT) {
-          try {
-            const { signInWithEmailAndPassword, signOut } = await import('firebase/auth');
-            const { auth } = await import('../config/firebase');
-            
-            // Try to authenticate with Firebase Auth
-            const userCredential = await signInWithEmailAndPassword(auth, email, password);
-            
-            // Authentication successful - set up role password for future logins
-            await setRolePassword(userId, roleToCheck, password);
-            
-            // Sign out from Firebase Auth (we use session-based auth, not Firebase Auth)
-            await signOut(auth);
-            
-            // Password is validated via Firebase Auth, no need to verify role password
-            passwordValidated = true;
-            toast.success('Password migrated successfully. Future logins will use the new system.');
-          } catch (firebaseAuthError) {
-            // Firebase Auth failed - invalid password
-            toast.error('Invalid email or password');
-            throw new Error('INVALID_ROLE_PASSWORD');
-          }
-        } else {
-          // For non-CLIENT roles, require role password to be set
-          toast.error('No password configured for this role. Please contact administrator.');
-          throw new Error('NO_ROLE_PASSWORD');
+        // Try Firebase Auth fallback for all roles
+        try {
+          const { signInWithEmailAndPassword, signOut } = await import('firebase/auth');
+          const { auth } = await import('../config/firebase');
+          
+          // Try to authenticate with Firebase Auth
+          const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+          
+          // Authentication successful - set up role password for future logins
+          await setRolePassword(userId, roleToCheck, password);
+          
+          // Sign out from Firebase Auth (we use session-based auth, not Firebase Auth)
+          await signOut(auth);
+          
+          // Password is validated via Firebase Auth, no need to verify role password
+          passwordValidated = true;
+          toast.success('Password migrated successfully. Future logins will use the new system.');
+        } catch (firebaseAuthError) {
+          // Firebase Auth failed - invalid password
+          toast.error('Invalid email or password');
+          throw new Error('INVALID_ROLE_PASSWORD');
         }
       }
       
@@ -192,8 +189,31 @@ export const AuthProvider = ({ children }) => {
         const rolePasswordValid = await verifyRolePassword(userId, roleToCheck, password);
         
         if (!rolePasswordValid) {
-          toast.error('Invalid password');
-          throw new Error('INVALID_ROLE_PASSWORD');
+          // If role password verification fails, try Firebase Auth as fallback
+          // This helps users who might have their password in Firebase Auth but not properly synced
+          try {
+            const { signInWithEmailAndPassword, signOut } = await import('firebase/auth');
+            const { auth } = await import('../config/firebase');
+            
+            // Try to authenticate with Firebase Auth
+            const userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+            
+            // Authentication successful - update role password to match
+            await setRolePassword(userId, roleToCheck, password);
+            
+            // Sign out from Firebase Auth
+            await signOut(auth);
+            
+            // Password is validated via Firebase Auth
+            passwordValidated = true;
+            toast.success('Password synced successfully.');
+          } catch (firebaseAuthError) {
+            // Both role password and Firebase Auth failed - invalid password
+            toast.error('Invalid password');
+            throw new Error('INVALID_ROLE_PASSWORD');
+          }
+        } else {
+          passwordValidated = true;
         }
       }
       
@@ -203,7 +223,7 @@ export const AuthProvider = ({ children }) => {
       // Store session in sessionStorage (tab-specific, allows multiple simultaneous sessions)
       const sessionData = {
         userId,
-        email,
+        email: normalizedEmail,
         activeRole,
         timestamp: Date.now()
       };

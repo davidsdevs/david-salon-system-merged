@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { ROUTES, USER_ROLES } from '../../utils/constants';
@@ -13,10 +13,20 @@ const StylistLogin = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  // Load remembered email on mount
+  useEffect(() => {
+    const rememberedEmail = localStorage.getItem('stylist_remembered_email');
+    if (rememberedEmail) {
+      setEmail(rememberedEmail);
+      setRememberMe(true);
+    }
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,6 +35,14 @@ const StylistLogin = () => {
 
     try {
       const result = await login(email, password, USER_ROLES.STYLIST);
+      
+      // Handle remember me
+      if (rememberMe) {
+        localStorage.setItem('stylist_remembered_email', email);
+      } else {
+        localStorage.removeItem('stylist_remembered_email');
+      }
+      
       navigate(ROUTES.STYLIST_DASHBOARD);
     } catch (error) {
       setError(error.message || 'Invalid email or password');
@@ -99,6 +117,31 @@ const StylistLogin = () => {
                       <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600" />
                     )}
                   </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <input
+                    id="remember-me"
+                    name="remember-me"
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="h-4 w-4 text-[#160B53] focus:ring-[#160B53] border-gray-300 rounded"
+                  />
+                  <label htmlFor="remember-me" className="ml-2 block text-sm text-gray-900">
+                    Remember me
+                  </label>
+                </div>
+
+                <div className="text-sm">
+                  <Link
+                    to="/forgot-password"
+                    className="font-medium text-[#160B53] hover:text-[#160B53]/80"
+                  >
+                    Forgot your password?
+                  </Link>
                 </div>
               </div>
 
