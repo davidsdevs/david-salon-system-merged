@@ -14,8 +14,6 @@ const ClientLayout = () => {
     { path: '/client/appointments', label: 'Appointments', icon: Calendar },
     { path: '/client/products', label: 'Products', icon: ShoppingBag },
     { path: '/client/rewards', label: 'Rewards', icon: Gift },
-    { section: 'Account' },
-    { path: ROUTES.CLIENT_PROFILE, label: 'Profile', icon: User },
   ];
 
   return (

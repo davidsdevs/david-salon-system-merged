@@ -21,6 +21,7 @@ import StaffLending from './StaffLending';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import RoleBadges from '../../components/ui/RoleBadges';
 import PDFPreviewModal from '../../components/ui/PDFPreviewModal';
+import ConfirmModal from '../../components/ui/ConfirmModal';
 import toast from 'react-hot-toast';
 
 const StaffManagement = () => {
@@ -48,6 +49,8 @@ const StaffManagement = () => {
   const [lentStaff, setLentStaff] = useState([]);
   const [lentOutStaff, setLentOutStaff] = useState({});
   const [branchCache, setBranchCache] = useState({});
+  const [showDeactivateModal, setShowDeactivateModal] = useState(false);
+  const [staffToToggle, setStaffToToggle] = useState(null);
   
   // Print refs
   const printRef = useRef(); // For all staff
@@ -477,10 +480,19 @@ const StaffManagement = () => {
     toast.success('CSV file downloaded successfully');
   };
 
-  const handleToggleStatus = async (userId, currentStatus) => {
+  const handleToggleStatus = (member, currentStatus) => {
+    setStaffToToggle({ member, currentStatus });
+    setShowDeactivateModal(true);
+  };
+
+  const confirmToggleStatus = async () => {
+    if (!staffToToggle) return;
+    
     try {
-      await toggleUserStatus(userId, !currentStatus, currentUser);
+      await toggleUserStatus(staffToToggle.member.id, !staffToToggle.currentStatus, currentUser);
       await fetchStaff();
+      setShowDeactivateModal(false);
+      setStaffToToggle(null);
     } catch (error) {
       // Error handled in service
     }
@@ -845,9 +857,6 @@ const StaffManagement = () => {
                   Role
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Shifts
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -861,7 +870,7 @@ const StaffManagement = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredStaff.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan="6" className="px-6 py-12 text-center text-gray-500">
                     No staff members found
                   </td>
                 </tr>
@@ -920,35 +929,6 @@ const StaffManagement = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <RoleBadges user={member} size="sm" />
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {member.shifts && Object.keys(member.shifts).length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {Object.keys(member.shifts).map((dayKey) => {
-                            const dayLabels = {
-                              monday: 'M',
-                              tuesday: 'T',
-                              wednesday: 'W',
-                              thursday: 'T',
-                              friday: 'F',
-                              saturday: 'S',
-                              sunday: 'S'
-                            };
-                            const shift = member.shifts[dayKey];
-                            return (
-                              <span
-                                key={dayKey}
-                                className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded"
-                                title={`${dayKey.charAt(0).toUpperCase() + dayKey.slice(1)}: ${shift.start} - ${shift.end}`}
-                              >
-                                {dayLabels[dayKey]}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-gray-400">No shifts</span>
-                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -1010,7 +990,7 @@ const StaffManagement = () => {
                             <Printer className="w-5 h-5" />
                           </button>
                           <button
-                            onClick={() => handleToggleStatus(member.id, member.isActive)}
+                            onClick={() => handleToggleStatus(member, member.isActive)}
                             className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${
                               member.isActive 
                                 ? 'text-red-600 hover:text-red-900 hover:bg-red-50' 
@@ -1224,6 +1204,26 @@ const StaffManagement = () => {
         fileName={`Staff_Data_${new Date().toISOString().split('T')[0]}`}
       />
 
+      {/* Deactivate/Activate Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showDeactivateModal}
+        onClose={() => {
+          setShowDeactivateModal(false);
+          setStaffToToggle(null);
+        }}
+        onConfirm={confirmToggleStatus}
+        title={staffToToggle?.currentStatus ? 'Deactivate Staff Member' : 'Activate Staff Member'}
+        message={staffToToggle ? `Are you sure you want to ${staffToToggle.currentStatus ? 'deactivate' : 'activate'} ${getFullName(staffToToggle.member)}?` : ''}
+        confirmText={staffToToggle?.currentStatus ? 'Deactivate' : 'Activate'}
+        cancelText="Cancel"
+        type={staffToToggle?.currentStatus ? 'danger' : 'success'}
+      >
+        {staffToToggle?.currentStatus && (
+          <p className="text-sm text-red-600 mt-2 font-medium">
+            This will prevent the staff member from accessing the system. They can be reactivated later.
+          </p>
+        )}
+      </ConfirmModal>
     </div>
   );
 };

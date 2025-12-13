@@ -288,6 +288,46 @@ export const canHaveMultipleRoles = (role) => {
  * @param {string} time - Time in 24-hour format (e.g., "14:30")
  * @returns {string} Time in 12-hour format (e.g., "2:30 PM")
  */
+/**
+ * Generate default password based on role
+ * Format: [Role]123[specialChar] (e.g., Stylist123!, Branchmanager123@)
+ * @param {string} role - User role (e.g., 'stylist', 'branch_manager')
+ * @returns {string} Generated default password with capitalized first letter
+ */
+export const generateDefaultPassword = (role) => {
+  if (!role) {
+    role = 'user';
+  }
+  
+  // Convert role to lowercase and remove underscores/spaces
+  let roleName = role.toLowerCase().replace(/[_\s]/g, '');
+  
+  // Capitalize first letter
+  roleName = roleName.charAt(0).toUpperCase() + roleName.slice(1);
+  
+  // Special characters pool
+  const specialChars = '!@#$%^&*()_+-=[]{}|;:,.<>?';
+  
+  // Generate random special character
+  const randomSpecialChar = specialChars.charAt(
+    Math.floor(Math.random() * specialChars.length)
+  );
+  
+  // Combine: Role + "123" + specialChar (e.g., "Stylist123!", "Branchmanager123@")
+  return `${roleName}123${randomSpecialChar}`;
+};
+
+/**
+ * Generate default password for user (uses primary role)
+ * @param {Object} user - User object with roles
+ * @returns {string} Generated default password
+ */
+export const generateDefaultPasswordForUser = (user) => {
+  const userRoles = getUserRoles(user);
+  const primaryRole = userRoles[0] || 'user';
+  return generateDefaultPassword(primaryRole);
+};
+
 export const formatTime12Hour = (time) => {
   if (!time) return '';
   

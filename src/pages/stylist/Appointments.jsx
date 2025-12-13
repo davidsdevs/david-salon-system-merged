@@ -5,29 +5,44 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Calendar, Clock, User, Phone, Mail, AlertCircle } from 'lucide-react';
+import { Calendar, Clock, User, Phone, Mail, AlertCircle, Eye, Scissors } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   getAppointmentsByStylist,
   getStylistTodayStats,
+  getAppointmentById,
   APPOINTMENT_STATUS 
 } from '../../services/appointmentService';
 import { formatDate, formatTime } from '../../utils/helpers';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import AppointmentDetails from '../../components/appointment/AppointmentDetails';
 
 const StylistAppointments = () => {
   const { currentUser } = useAuth();
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [filter, setFilter] = useState('today');
   const [stats, setStats] = useState(null);
+  const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [pageSize] = useState(20);
 
   useEffect(() => {
     if (currentUser) {
-      fetchAppointments();
+      fetchAppointments(false);
       fetchStats();
     }
   }, [currentUser]);
+
+  // Refetch when filter changes
+  useEffect(() => {
+    if (currentUser && appointments.length > 0) {
+      // Filter is applied client-side, no need to refetch
+    }
+  }, [filter]);
 
   const fetchStats = async () => {
     try {
@@ -38,15 +53,36 @@ const StylistAppointments = () => {
     }
   };
 
-  const fetchAppointments = async () => {
+  const fetchAppointments = async (loadMore = false) => {
     try {
-      setLoading(true);
+      if (loadMore) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+        setAppointments([]);
+        setHasMore(true);
+      }
+
       const data = await getAppointmentsByStylist(currentUser.uid);
-      setAppointments(data);
+      
+      // For big data, limit initial load and implement pagination
+      if (!loadMore) {
+        // Initial load - show first page
+        const initialData = data.slice(0, pageSize);
+        setAppointments(initialData);
+        setHasMore(data.length > pageSize);
+      } else {
+        // Load more - append next page
+        const startIndex = appointments.length;
+        const nextPage = data.slice(startIndex, startIndex + pageSize);
+        setAppointments(prev => [...prev, ...nextPage]);
+        setHasMore(startIndex + pageSize < data.length);
+      }
     } catch (error) {
       console.error('Error fetching appointments:', error);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -92,6 +128,23 @@ const StylistAppointments = () => {
 
   const getStatusLabel = (status) => {
     return status.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+  };
+
+  const handleViewDetails = async (appointment) => {
+    try {
+      setLoadingDetails(true);
+      // Fetch full appointment details including history
+      const fullAppointment = await getAppointmentById(appointment.id);
+      setSelectedAppointment(fullAppointment);
+      setShowDetailsModal(true);
+    } catch (error) {
+      console.error('Error fetching appointment details:', error);
+      // If fetching fails, use the appointment data we already have
+      setSelectedAppointment(appointment);
+      setShowDetailsModal(true);
+    } finally {
+      setLoadingDetails(false);
+    }
   };
 
   if (loading || !stats) {
@@ -166,99 +219,191 @@ const StylistAppointments = () => {
         </div>
       </div>
 
-      {/* Appointments List - Mobile Optimized */}
-      <div className="space-y-3">
-        {filteredAppointments.length === 0 ? (
-          <div className="bg-white rounded-lg shadow border border-gray-200 p-8 text-center">
-            <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-            <p className="text-gray-500">No appointments found</p>
-          </div>
-        ) : (
-          filteredAppointments.map((appointment) => (
-            <div key={appointment.id} className="bg-white rounded-lg shadow border border-gray-200 p-4">
-              {/* Header */}
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex-1">
-                  <h3 className="font-semibold text-gray-900 mb-1">
-                    {appointment.clientName || 'Guest Client'}
-                  </h3>
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(appointment.status)}`}>
-                    {getStatusLabel(appointment.status)}
-                  </span>
-                </div>
-              </div>
+      {/* Appointments List - Using Check-Ins Layout */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100">
+        <div className="p-4 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">
+            My Appointments ({filteredAppointments.length})
+          </h2>
+        </div>
+        <div className="divide-y divide-gray-100">
+          {filteredAppointments.length === 0 ? (
+            <div className="p-12 text-center">
+              <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500">No appointments found</p>
+              <p className="text-sm text-gray-400 mt-1">
+                {filter === 'today'
+                  ? 'No appointments scheduled for today'
+                  : filter === 'upcoming'
+                  ? 'No upcoming appointments'
+                  : filter === 'completed'
+                  ? 'No completed appointments'
+                  : 'No appointments found'}
+              </p>
+            </div>
+          ) : (
+            <>
+              {filteredAppointments.map((appointment) => {
+                // Get services assigned to this stylist
+                const myServices = appointment.services && appointment.services.length > 0
+                  ? appointment.services.filter(svc => svc.stylistId === currentUser.uid)
+                  : [];
 
-              {/* Details */}
-              <div className="space-y-2 mb-4">
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Calendar className="w-4 h-4 flex-shrink-0" />
-                  <span>{formatDate(appointment.appointmentDate)}</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Clock className="w-4 h-4 flex-shrink-0" />
-                  <span>{formatTime(appointment.appointmentDate)} ({appointment.duration || 60} mins)</span>
-                </div>
-                {/* Service(s) */}
-                <div className="flex items-start gap-2 text-sm text-gray-600">
-                  <User className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1">
-                    {appointment.services && appointment.services.length > 0 ? (
-                      <div className="space-y-1">
-                        {appointment.services
-                          .filter(svc => svc.stylistId === currentUser.uid) // Only show services assigned to this stylist
-                          .map((service, idx) => (
-                            <div key={idx} className="flex items-center gap-2 flex-wrap">
-                              <span>{service.serviceName || 'Service'}</span>
-                              {service.isChemical && (
-                                <span className="text-xs px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded font-medium">
-                                  CHEMICAL
-                                </span>
+                return (
+                  <div key={appointment.id} className="p-4 hover:bg-gray-50 transition-colors">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center">
+                            <User className="w-5 h-5 text-primary-600" />
+                          </div>
+                          <div>
+                            <h3 className="font-semibold text-gray-900">{appointment.clientName || 'Guest Client'}</h3>
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(appointment.status)}`}>
+                              {getStatusLabel(appointment.status)}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        <div className="ml-13 space-y-3">
+                          {/* Services - Must See */}
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <Scissors className="w-4 h-4 text-primary-600" />
+                              <span className="text-sm font-semibold text-gray-900">Services</span>
+                            </div>
+                            {myServices.length > 0 ? (
+                              <div className="space-y-2">
+                                {myServices.map((service, index) => (
+                                  <div 
+                                    key={index} 
+                                    className="bg-primary-100 border-2 border-primary-400 rounded-lg p-3"
+                                  >
+                                    <div className="flex items-start justify-between">
+                                      <div className="flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <div className="font-semibold text-sm text-primary-900">
+                                            {service.serviceName || 'Unknown Service'}
+                                          </div>
+                                          <span className="px-2 py-0.5 bg-primary-600 text-white text-xs rounded-full font-medium">
+                                            Your Service
+                                          </span>
+                                        </div>
+                                        {service.price && (
+                                          <div className="text-xs mt-1 text-primary-700">
+                                            ₱{parseFloat(service.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                          </div>
+                                        )}
+                                        {service.duration && (
+                                          <div className="text-xs mt-1 text-primary-700">
+                                            {service.duration} minutes
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : appointment.serviceName ? (
+                              <div className="bg-primary-100 border-2 border-primary-400 rounded-lg p-3">
+                                <div className="flex items-center gap-2">
+                                  <div className="font-semibold text-sm text-primary-900">
+                                    {appointment.serviceName}
+                                  </div>
+                                  <span className="px-2 py-0.5 bg-primary-600 text-white text-xs rounded-full font-medium">
+                                    Your Service
+                                  </span>
+                                </div>
+                                {appointment.servicePrice && (
+                                  <div className="text-xs mt-1 text-primary-700">
+                                    ₱{parseFloat(appointment.servicePrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-gray-500 italic">No services listed</div>
+                            )}
+                          </div>
+
+                          <div className="space-y-2 pt-2 border-t border-gray-200">
+                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                              <Calendar className="w-4 h-4" />
+                              <span>{formatDate(appointment.appointmentDate)}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                              <Clock className="w-4 h-4" />
+                              <span>{formatTime(appointment.appointmentDate)}</span>
+                              {appointment.duration && (
+                                <span className="text-gray-400">• {appointment.duration} mins</span>
                               )}
                             </div>
-                          ))}
+                            
+                            {appointment.clientPhone && (
+                              <div className="flex items-center gap-2 text-sm text-gray-600">
+                                <Phone className="w-4 h-4" />
+                                <a href={`tel:${appointment.clientPhone}`} className="text-primary-600 hover:underline">
+                                  {appointment.clientPhone}
+                                </a>
+                              </div>
+                            )}
+                            
+                            {appointment.clientEmail && (
+                              <div className="flex items-center gap-2 text-sm text-gray-600">
+                                <Mail className="w-4 h-4" />
+                                <a href={`mailto:${appointment.clientEmail}`} className="text-primary-600 hover:underline truncate">
+                                  {appointment.clientEmail}
+                                </a>
+                              </div>
+                            )}
+
+                            {appointment.notes && (
+                              <div className="mt-2 p-2 bg-gray-50 rounded text-sm text-gray-700">
+                                <strong>Notes:</strong> {appointment.notes}
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    ) : (
-                      <span>{appointment.serviceName || 'Service'}</span>
-                    )}
+                      <button
+                        onClick={() => handleViewDetails(appointment)}
+                        disabled={loadingDetails}
+                        className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors disabled:opacity-50"
+                        title="View Full Details"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-                {appointment.clientPhone && (
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Phone className="w-4 h-4 flex-shrink-0" />
-                    <a href={`tel:${appointment.clientPhone}`} className="text-primary-600 hover:underline">
-                      {appointment.clientPhone}
-                    </a>
-                  </div>
-                )}
-                {appointment.clientEmail && (
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <Mail className="w-4 h-4 flex-shrink-0" />
-                    <a href={`mailto:${appointment.clientEmail}`} className="text-primary-600 hover:underline truncate">
-                      {appointment.clientEmail}
-                    </a>
-                  </div>
-                )}
-              </div>
+                );
+              })}
 
-              {/* Notes */}
-              {appointment.notes && (
-                <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500 mb-1">Notes:</p>
-                  <p className="text-sm text-gray-700">{appointment.notes}</p>
+              {/* Load More Button */}
+              {hasMore && (
+                <div className="p-4 text-center border-t border-gray-200">
+                  <button
+                    onClick={() => fetchAppointments(true)}
+                    disabled={loadingMore}
+                    className="px-6 py-2 text-primary-600 hover:text-primary-700 font-medium disabled:opacity-50"
+                  >
+                    {loadingMore ? 'Loading...' : 'Load More'}
+                  </button>
                 </div>
               )}
-
-              {/* Info Banner - Stylists can only view */}
-              {appointment.status !== APPOINTMENT_STATUS.COMPLETED && appointment.status !== APPOINTMENT_STATUS.CANCELLED && (
-                <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                  <span>Please inform the receptionist to update appointment status</span>
-                </div>
-              )}
-            </div>
-          ))
-        )}
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Appointment Details Modal */}
+      {showDetailsModal && selectedAppointment && (
+        <AppointmentDetails
+          appointment={selectedAppointment}
+          onClose={() => {
+            setShowDetailsModal(false);
+            setSelectedAppointment(null);
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -1,69 +1,206 @@
 /**
  * Email Service
- * Handles email notifications via SendGrid
+ * Handles email notifications via Brevo (formerly Sendinblue)
  * 
- * To use this service, configure SendGrid API key in environment variables:
- * VITE_SENDGRID_API_KEY=your_api_key_here
+ * To use this service, configure Brevo API key in environment variables:
+ * VITE_BREVO_API_KEY=your_api_key_here
+ * VITE_BREVO_FROM_EMAIL=noreply@davidsalon.com
+ * VITE_BREVO_FROM_NAME=David's Salon
  */
 
+import { ROLE_LABELS } from '../utils/constants';
+
 /**
- * Send email via SendGrid
+ * Verify Brevo API configuration
+ * @returns {Object} Configuration status
+ */
+export const verifyBrevoConfig = () => {
+  const apiKey = import.meta.env.VITE_BREVO_API_KEY;
+  const fromEmail = import.meta.env.VITE_BREVO_FROM_EMAIL || 'noreply@davidsalon.com';
+  const fromName = import.meta.env.VITE_BREVO_FROM_NAME || "David's Salon";
+  
+  const config = {
+    apiKey: {
+      exists: !!apiKey,
+      length: apiKey?.length || 0,
+      format: apiKey?.startsWith('xkeysib-') ? 'correct' : 'unexpected format (should start with xkeysib-)'
+    },
+    fromEmail: fromEmail,
+    fromName: fromName,
+    endpoint: 'https://api.brevo.com/v3/smtp/email'
+  };
+  
+  console.log('🔍 [BREVO CONFIG] Configuration check:', config);
+  
+  if (!apiKey) {
+    console.error('❌ [BREVO CONFIG] API key is missing!');
+  } else if (!apiKey.startsWith('xkeysib-')) {
+    console.warn('⚠️ [BREVO CONFIG] API key format looks incorrect. Brevo API keys usually start with "xkeysib-"');
+  } else {
+    console.log('✅ [BREVO CONFIG] API key format looks correct');
+  }
+  
+  return config;
+};
+
+/**
+ * Send email via Brevo API
  * @param {Object} emailData - Email data
  * @param {string} emailData.to - Recipient email
  * @param {string} emailData.subject - Email subject
  * @param {string} emailData.text - Plain text content
  * @param {string} emailData.html - HTML content (optional)
+ * @param {string} emailData.toName - Recipient name (optional)
  * @returns {Promise<Object>} Send result
  */
-export const sendEmail = async ({ to, subject, text, html }) => {
-  const apiKey = import.meta.env.VITE_SENDGRID_API_KEY;
-  const fromEmail = import.meta.env.VITE_SENDGRID_FROM_EMAIL || 'noreply@davidsalon.com';
+export const sendEmail = async ({ to, subject, text, html, toName }) => {
+  console.log('📧 [EMAIL SERVICE] ========================================');
+  console.log('📧 [EMAIL SERVICE] Starting email send...');
+  console.log('📧 [EMAIL SERVICE] Recipient:', to);
+  console.log('📧 [EMAIL SERVICE] Subject:', subject);
+  
+  // Verify configuration first
+  const config = verifyBrevoConfig();
+  
+  const apiKey = import.meta.env.VITE_BREVO_API_KEY;
+  const fromEmail = import.meta.env.VITE_BREVO_FROM_EMAIL || 'noreply@davidsalon.com';
+  const fromName = import.meta.env.VITE_BREVO_FROM_NAME || "David's Salon";
+  
+  console.log('📧 [EMAIL SERVICE] API Key configured:', apiKey ? '✅ Yes (length: ' + apiKey.length + ')' : '❌ No');
+  console.log('📧 [EMAIL SERVICE] API Key format:', config.apiKey.format);
+  console.log('📧 [EMAIL SERVICE] From Email:', fromEmail);
+  console.log('📧 [EMAIL SERVICE] From Name:', fromName);
   
   if (!apiKey) {
-    console.warn('SendGrid API key not configured. Email not sent.');
+    console.warn('⚠️ [EMAIL SERVICE] Brevo API key not configured. Email not sent.');
     return {
       success: false,
-      error: 'SendGrid API key not configured'
+      error: 'Brevo API key not configured'
     };
-    }
+  }
 
   try {
-    const response = await fetch('https://api.sendgrid.com/v3/mail/send', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
+    const emailPayload = {
+      sender: {
+        name: fromName,
+        email: fromEmail
       },
-      body: JSON.stringify({
-        personalizations: [{
-          to: [{ email: to }]
-        }],
-        from: { email: fromEmail },
-        subject: subject,
-        content: [
-          {
-            type: 'text/plain',
-            value: text
-          },
-          ...(html ? [{
-            type: 'text/html',
-            value: html
-          }] : [])
-        ]
-      })
+      to: [{
+        email: to,
+        ...(toName ? { name: toName } : {})
+      }],
+      subject: subject,
+      htmlContent: html || text.replace(/\n/g, '<br>'),
+      textContent: text
+    };
+
+    console.log('📧 [EMAIL SERVICE] Email payload prepared:', {
+      sender: emailPayload.sender,
+      to: emailPayload.to,
+      subject: emailPayload.subject,
+      hasHtml: !!emailPayload.htmlContent,
+      hasText: !!emailPayload.textContent
+    });
+
+    console.log('📧 [EMAIL SERVICE] Sending request to Brevo API...');
+    console.log('📧 [EMAIL SERVICE] API Endpoint: https://api.brevo.com/v3/smtp/email');
+    console.log('📧 [EMAIL SERVICE] Request payload (sanitized):', {
+      sender: emailPayload.sender,
+      to: emailPayload.to,
+      subject: emailPayload.subject,
+      htmlContentLength: emailPayload.htmlContent?.length || 0,
+      textContentLength: emailPayload.textContent?.length || 0
     });
     
-    if (!response.ok) {
-      const errorData = await response.text();
-      throw new Error(`SendGrid API error: ${response.status} - ${errorData}`);
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(emailPayload)
+    });
+    
+    console.log('📧 [EMAIL SERVICE] Response status:', response.status, response.statusText);
+    console.log('📧 [EMAIL SERVICE] Response ok?', response.ok);
+    console.log('📧 [EMAIL SERVICE] Response headers:', Object.fromEntries(response.headers.entries()));
+    
+    // Get response body as text first to see what we're getting
+    const responseText = await response.text();
+    console.log('📧 [EMAIL SERVICE] Raw response body:', responseText);
+    console.log('📧 [EMAIL SERVICE] Response body length:', responseText.length);
+    
+    // Brevo returns 201 Created for successful sends
+    if (response.status === 201) {
+      console.log('✅ [EMAIL SERVICE] Brevo returned 201 Created - Email accepted by Brevo!');
+    } else if (!response.ok) {
+      console.error('❌ [EMAIL SERVICE] Brevo API error response:', responseText);
+      let errorMessage = `Brevo API error: ${response.status}`;
+      try {
+        const errorJson = JSON.parse(responseText);
+        errorMessage = errorJson.message || errorMessage;
+        console.error('❌ [EMAIL SERVICE] Parsed error message:', errorMessage);
+        console.error('❌ [EMAIL SERVICE] Error code:', errorJson.code);
+        console.error('❌ [EMAIL SERVICE] Full error object:', errorJson);
+        
+        // Common Brevo errors
+        if (errorMessage.includes('sender') || errorMessage.includes('verified')) {
+          console.error('⚠️ [EMAIL SERVICE] SENDER EMAIL NOT VERIFIED!');
+          console.error('⚠️ [EMAIL SERVICE] Go to Brevo dashboard > Senders and verify:', fromEmail);
+        }
+      } catch (e) {
+        errorMessage += ` - ${responseText}`;
+      }
+      throw new Error(errorMessage);
     }
+
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch (e) {
+      console.warn('⚠️ [EMAIL SERVICE] Response is not JSON, treating as success:', responseText);
+      result = { messageId: responseText || 'unknown' };
+    }
+    
+    console.log('✅ [EMAIL SERVICE] Email sent successfully!');
+    console.log('✅ [EMAIL SERVICE] Message ID:', result.messageId);
+    console.log('✅ [EMAIL SERVICE] Full response:', JSON.stringify(result, null, 2));
+    
+    // Important note about email delivery
+    console.log('📬 [EMAIL SERVICE] IMPORTANT: Email accepted by Brevo API');
+    console.log('📬 [EMAIL SERVICE] Check the following if email not received:');
+    console.log('📬 [EMAIL SERVICE] 1. Check spam/junk folder');
+    console.log('📬 [EMAIL SERVICE] 2. Verify sender email is verified in Brevo dashboard');
+    console.log('📬 [EMAIL SERVICE] 3. Check Brevo dashboard > Logs for delivery status');
+    console.log('📬 [EMAIL SERVICE] 4. Verify recipient email is correct:', to);
+    
+    // Check for warnings in response
+    if (result.warnings && result.warnings.length > 0) {
+      console.warn('⚠️ [EMAIL SERVICE] Brevo warnings:', result.warnings);
+    }
+    
+    // Important: Even if Brevo returns 201, the email might not be delivered if:
+    // 1. Sender email is not verified in Brevo dashboard
+    // 2. Email goes to spam folder
+    // 3. Recipient email is invalid
+    console.log('📧 [EMAIL SERVICE] ⚠️ IMPORTANT: Check the following:');
+    console.log('📧 [EMAIL SERVICE] 1. Is sender email verified in Brevo? (SMTP & API > Senders)');
+    console.log('📧 [EMAIL SERVICE] 2. Check Brevo dashboard > Logs for delivery status');
+    console.log('📧 [EMAIL SERVICE] 3. Check spam/junk folder');
+    console.log('📧 [EMAIL SERVICE] 4. Verify recipient email is correct:', to);
     
     return {
       success: true,
-      message: 'Email sent successfully'
+      message: 'Email sent successfully',
+      messageId: result.messageId,
+      warnings: result.warnings || []
     };
   } catch (error) {
-    console.error('Error sending email:', error);
+    console.error('❌ [EMAIL SERVICE] Error sending email:', error);
+    console.error('❌ [EMAIL SERVICE] Error details:', {
+      message: error.message,
+      stack: error.stack
+    });
     return {
       success: false,
       error: error.message || 'Failed to send email'
@@ -587,6 +724,316 @@ export const sendUserCreatedEmail = async ({ email, displayName, role, temporary
   return await sendEmail({
     to: email,
     subject: 'Account Created - David\'s Salon Management System',
+    text: textContent,
+    html: htmlContent
+  });
+};
+
+/**
+ * Send password reset email to user (System Admin reset)
+ * @param {Object} userData - User data
+ * @param {string} userData.email - User email
+ * @param {string} userData.firstName - User first name
+ * @param {string} userData.lastName - User last name
+ * @param {string} newPassword - The new default password
+ * @returns {Promise<Object>} Send result
+ */
+export const sendPasswordResetEmail = async ({ email, firstName, lastName, rolePasswords }) => {
+  console.log('🔐 [PASSWORD RESET EMAIL] Function called');
+  console.log('🔐 [PASSWORD RESET EMAIL] Email:', email);
+  console.log('🔐 [PASSWORD RESET EMAIL] Role passwords:', rolePasswords);
+  
+  if (!email) {
+    console.error('❌ [PASSWORD RESET EMAIL] Email is required');
+    return {
+      success: false,
+      error: 'Email is required'
+    };
+  }
+
+  const displayName = firstName && lastName 
+    ? `${firstName} ${lastName}`.trim()
+    : firstName || lastName || 'User';
+  
+  console.log('🔐 [PASSWORD RESET EMAIL] Display name:', displayName);
+
+  // Build role passwords list
+  const rolePasswordsList = Object.entries(rolePasswords || {}).map(([role, password]) => ({
+    roleLabel: ROLE_LABELS[role] || role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+    password: password
+  }));
+
+  // If no role passwords provided, return error
+  if (rolePasswordsList.length === 0) {
+    return {
+      success: false,
+      error: 'No passwords provided'
+    };
+  }
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #160B53; color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { padding: 30px; background-color: #f9fafb; border-radius: 0 0 8px 8px; }
+        .credentials { background-color: #eff6ff; border-left: 4px solid #2563eb; padding: 20px; margin: 20px 0; border-radius: 6px; }
+        .password-item { background-color: #fff; border: 2px solid #2563eb; padding: 15px; margin: 12px 0; border-radius: 6px; }
+        .role-label { font-size: 14px; font-weight: bold; color: #160B53; margin-bottom: 8px; text-transform: capitalize; }
+        .password-box { text-align: center; font-size: 18px; font-weight: bold; font-family: monospace; color: #160B53; padding: 10px; background-color: #f8f9fa; border-radius: 4px; }
+        .info { background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 6px; }
+        .footer { text-align: center; padding: 20px; color: #666; font-size: 0.9em; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Password Reset Notification</h1>
+        </div>
+        <div class="content">
+          <p>Dear ${displayName},</p>
+          
+          <p>Your password${rolePasswordsList.length > 1 ? 's have' : ' has'} been reset by the system administrator.</p>
+          
+          <div class="credentials">
+            <p><strong>Your new password${rolePasswordsList.length > 1 ? 's for each role' : ''} ${rolePasswordsList.length > 1 ? 'are' : 'is'}:</strong></p>
+            ${rolePasswordsList.map(({ roleLabel, password }) => `
+              <div class="password-item">
+                <div class="role-label">${roleLabel}:</div>
+                <div class="password-box">${password}</div>
+              </div>
+            `).join('')}
+          </div>
+          
+          <div class="info">
+            <p><strong>Important Security Information:</strong></p>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+              <li>Please log in with the appropriate password for your role${rolePasswordsList.length > 1 ? 's' : ''} as soon as possible</li>
+              <li>We strongly recommend changing your password${rolePasswordsList.length > 1 ? 's' : ''} after your first login</li>
+              <li>Do not share these passwords with anyone</li>
+              <li>If you did not request this password reset, please contact support immediately</li>
+            </ul>
+          </div>
+          
+          <p>You can now log in to the David's Salon Management System using your email address and the password${rolePasswordsList.length > 1 ? 's' : ''} shown above.</p>
+          
+          <p>If you have any questions or need assistance, please contact our support team.</p>
+          
+          <p>Best regards,<br>
+          <strong>The David's Salon Team</strong></p>
+        </div>
+        <div class="footer">
+          <p>This is an automated email. Please do not reply directly to this message.</p>
+          <p>&copy; ${new Date().getFullYear()} David's Salon. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const textContent = `
+    Password Reset Notification - David's Salon Management System
+    
+    Dear ${displayName},
+    
+    Your password${rolePasswordsList.length > 1 ? 's have' : ' has'} been reset by the system administrator.
+    
+    Your new password${rolePasswordsList.length > 1 ? 's for each role' : ''} ${rolePasswordsList.length > 1 ? 'are' : 'is'}:
+    
+    ${rolePasswordsList.map(({ roleLabel, password }) => `${roleLabel}: ${password}`).join('\n    ')}
+    
+    Important Security Information:
+    - Please log in with the appropriate password for your role${rolePasswordsList.length > 1 ? 's' : ''} as soon as possible
+    - We strongly recommend changing your password${rolePasswordsList.length > 1 ? 's' : ''} after your first login
+    - Do not share these passwords with anyone
+    - If you did not request this password reset, please contact support immediately
+    
+    You can now log in to the David's Salon Management System using your email address and the password${rolePasswordsList.length > 1 ? 's' : ''} shown above.
+    
+    If you have any questions or need assistance, please contact our support team.
+    
+    Best regards,
+    The David's Salon Team
+    
+    ---
+    This is an automated email. Please do not reply directly to this message.
+    © ${new Date().getFullYear()} David's Salon. All rights reserved.
+  `;
+
+  console.log('🔐 [PASSWORD RESET EMAIL] Calling sendEmail function...');
+  const result = await sendEmail({
+    to: email,
+    toName: displayName,
+    subject: 'Password Reset - David\'s Salon Management System',
+    text: textContent,
+    html: htmlContent
+  });
+  
+  console.log('🔐 [PASSWORD RESET EMAIL] sendEmail result:', result);
+  return result;
+};
+
+/**
+ * Send profile update notification email to user
+ * @param {Object} userData - User data
+ * @param {string} userData.email - User email
+ * @param {string} userData.firstName - User first name
+ * @param {string} userData.lastName - User last name
+ * @param {Object} changes - Object containing changed fields with from/to values
+ * @param {Array} changedFields - Array of field names that changed
+ * @returns {Promise<Object>} Send result
+ */
+export const sendProfileUpdateEmail = async ({ email, firstName, lastName, changes, changedFields }) => {
+  if (!email) {
+    return {
+      success: false,
+      error: 'Email is required'
+    };
+  }
+
+  const displayName = firstName && lastName 
+    ? `${firstName} ${lastName}`.trim()
+    : firstName || lastName || 'User';
+
+  // Format field labels
+  const fieldLabels = {
+    firstName: 'First Name',
+    middleName: 'Middle Name',
+    lastName: 'Last Name',
+    phone: 'Phone Number',
+    branchId: 'Branch Assignment',
+    roles: 'Roles',
+    isActive: 'Account Status',
+    photoURL: 'Profile Picture'
+  };
+
+  // Build changes list
+  const changesList = changedFields.map(field => {
+    const label = fieldLabels[field] || field.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
+    const change = changes[field];
+    let fromValue = change?.from;
+    let toValue = change?.to;
+
+    // Format special fields
+    if (field === 'roles') {
+      fromValue = Array.isArray(fromValue) ? fromValue.map(r => ROLE_LABELS[r] || r).join(', ') : fromValue;
+      toValue = Array.isArray(toValue) ? toValue.map(r => ROLE_LABELS[r] || r).join(', ') : toValue;
+    } else if (field === 'isActive') {
+      fromValue = fromValue ? 'Active' : 'Inactive';
+      toValue = toValue ? 'Active' : 'Inactive';
+    } else if (field === 'branchId') {
+      // Branch names are already fetched in userService
+      fromValue = fromValue || 'Not Assigned';
+      toValue = toValue || 'Not Assigned';
+    } else if (field === 'photoURL') {
+      fromValue = fromValue ? 'Updated' : 'Not Set';
+      toValue = toValue ? 'Updated' : 'Not Set';
+    } else {
+      fromValue = fromValue || 'Not Set';
+      toValue = toValue || 'Not Set';
+    }
+
+    return { label, fromValue, toValue };
+  });
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #160B53; color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { padding: 30px; background-color: #f9fafb; border-radius: 0 0 8px 8px; }
+        .changes-box { background-color: #fff; border: 2px solid #2563eb; padding: 20px; margin: 20px 0; border-radius: 6px; }
+        .change-item { padding: 12px; margin: 8px 0; background-color: #f8f9fa; border-left: 4px solid #2563eb; border-radius: 4px; }
+        .change-label { font-weight: bold; color: #160B53; margin-bottom: 4px; }
+        .change-value { color: #666; font-size: 0.9em; }
+        .arrow { color: #2563eb; margin: 0 8px; font-weight: bold; }
+        .info { background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 6px; }
+        .footer { text-align: center; padding: 20px; color: #666; font-size: 0.9em; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Profile Updated</h1>
+        </div>
+        <div class="content">
+          <p>Dear ${displayName},</p>
+          
+          <p>Your profile information has been updated by the system administrator.</p>
+          
+          <div class="changes-box">
+            <p style="font-weight: bold; color: #160B53; margin-bottom: 15px;">The following changes were made to your profile:</p>
+            ${changesList.map(change => `
+              <div class="change-item">
+                <div class="change-label">${change.label}:</div>
+                <div class="change-value">
+                  <span style="text-decoration: line-through; color: #999;">${change.fromValue}</span>
+                  <span class="arrow">→</span>
+                  <span style="color: #2563eb; font-weight: bold;">${change.toValue}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          
+          <div class="info">
+            <p><strong>Important:</strong></p>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+              <li>Please review the changes above</li>
+              <li>If you did not request these changes, please contact support immediately</li>
+              <li>You may need to log out and log back in to see all changes</li>
+            </ul>
+          </div>
+          
+          <p>If you have any questions or concerns about these changes, please contact our support team.</p>
+          
+          <p>Best regards,<br>
+          <strong>The David's Salon Team</strong></p>
+        </div>
+        <div class="footer">
+          <p>This is an automated email. Please do not reply directly to this message.</p>
+          <p>&copy; ${new Date().getFullYear()} David's Salon. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const textContent = `
+    Profile Updated - David's Salon Management System
+    
+    Dear ${displayName},
+    
+    Your profile information has been updated by the system administrator.
+    
+    The following changes were made to your profile:
+    
+    ${changesList.map(change => `${change.label}:\n  From: ${change.fromValue}\n  To: ${change.toValue}\n`).join('\n')}
+    
+    Important:
+    - Please review the changes above
+    - If you did not request these changes, please contact support immediately
+    - You may need to log out and log back in to see all changes
+    
+    If you have any questions or concerns about these changes, please contact our support team.
+    
+    Best regards,
+    The David's Salon Team
+    
+    ---
+    This is an automated email. Please do not reply directly to this message.
+    © ${new Date().getFullYear()} David's Salon. All rights reserved.
+  `;
+
+  return await sendEmail({
+    to: email,
+    toName: displayName,
+    subject: 'Profile Updated - David\'s Salon Management System',
     text: textContent,
     html: htmlContent
   });

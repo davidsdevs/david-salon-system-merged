@@ -4,10 +4,9 @@
  */
 
 import { useState, useEffect } from 'react';
-import { X, Upload, Plus, Trash2, Package, Search } from 'lucide-react';
+import { X, Upload } from 'lucide-react';
 import { getServiceCategories } from '../../services/serviceManagementService';
 import { uploadToCloudinary, validateImageFile } from '../../services/imageService';
-import { productService } from '../../services/productService';
 import toast from 'react-hot-toast';
 
 const ServiceModal = ({
@@ -29,17 +28,6 @@ const ServiceModal = ({
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const [productMappings, setProductMappings] = useState([]); // Array of {productId, productName, quantity, unit, percentage}
-  const [allProducts, setAllProducts] = useState([]);
-  const [productSearchTerm, setProductSearchTerm] = useState('');
-  const [showProductSelector, setShowProductSelector] = useState(false);
-  const [loadingProducts, setLoadingProducts] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      loadProducts();
-    }
-  }, [isOpen]);
 
   useEffect(() => {
     if (service) {
@@ -53,9 +41,6 @@ const ServiceModal = ({
         isActive: service.isActive !== undefined ? service.isActive : true
       });
       setImagePreview(service.imageURL || null);
-      
-      // Load existing product mappings if any (from products collection)
-      loadExistingMappings(service.id);
     } else {
       setFormData({
         name: '',
@@ -67,87 +52,9 @@ const ServiceModal = ({
         isActive: true
       });
       setImagePreview(null);
-      setProductMappings([]);
     }
     setImageFile(null);
   }, [service, isOpen]);
-
-  const loadProducts = async () => {
-    try {
-      setLoadingProducts(true);
-      const result = await productService.getAllProducts();
-      if (result.success) {
-        setAllProducts(result.products.filter(p => p.status === 'Active'));
-      }
-    } catch (error) {
-      console.error('Error loading products:', error);
-    } finally {
-      setLoadingProducts(false);
-    }
-  };
-
-  const loadExistingMappings = async (serviceId) => {
-    try {
-      // Load mappings from service document (new structure)
-      const { getServiceById } = await import('../../services/serviceManagementService');
-      const service = await getServiceById(serviceId);
-      
-      if (service && service.productMappings && Array.isArray(service.productMappings)) {
-        setProductMappings(service.productMappings);
-      } else {
-        // Fallback: Load from products collection (legacy structure)
-        const result = await productService.getAllProducts();
-        if (result.success) {
-          const mappings = [];
-          result.products.forEach(product => {
-            if (product.serviceProductMapping && product.serviceProductMapping[serviceId]) {
-              mappings.push({
-                productId: product.id,
-                productName: product.name,
-                quantity: 0, // Default values for legacy
-                unit: 'ml',
-                percentage: 0
-              });
-            }
-          });
-          setProductMappings(mappings);
-        }
-      }
-    } catch (error) {
-      console.error('Error loading existing mappings:', error);
-    }
-  };
-
-  const filteredProducts = allProducts.filter(product => {
-    const matchesSearch = product.name?.toLowerCase().includes(productSearchTerm.toLowerCase()) ||
-                         product.brand?.toLowerCase().includes(productSearchTerm.toLowerCase());
-    const alreadyMapped = productMappings.some(m => m.productId === product.id);
-    return matchesSearch && !alreadyMapped;
-  });
-
-  const handleAddProduct = (product) => {
-    setProductMappings([...productMappings, {
-      productId: product.id,
-      productName: product.name,
-      quantity: 0,
-      unit: 'ml', // Default unit
-      percentage: 0 // Percentage of service price
-    }]);
-    setShowProductSelector(false);
-    setProductSearchTerm('');
-  };
-
-  const handleRemoveProduct = (productId) => {
-    setProductMappings(productMappings.filter(m => m.productId !== productId));
-  };
-
-  const handleUpdateMapping = (productId, field, value) => {
-    setProductMappings(productMappings.map(m => 
-      m.productId === productId 
-        ? { ...m, [field]: field === 'quantity' || field === 'percentage' ? parseFloat(value) || 0 : value }
-        : m
-    ));
-  };
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -184,8 +91,7 @@ const ServiceModal = ({
       onSubmit({
         ...formData,
         imageURL,
-        id: service?.id,
-        productMappings // Pass product mappings to parent
+        id: service?.id
       });
     } catch (error) {
       setUploading(false);
@@ -348,136 +254,6 @@ const ServiceModal = ({
                       PNG, JPG up to 5MB
                     </p>
                   </label>
-                </div>
-              )}
-            </div>
-
-            {/* Product Mappings */}
-            <div className="border border-gray-200 rounded-lg p-4">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Service-Product Mapping
-                  </label>
-                  <p className="text-xs text-gray-500">
-                    Map products used in this service with quantity and percentage of service price
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowProductSelector(!showProductSelector)}
-                  className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 flex items-center gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add Product
-                </button>
-              </div>
-
-              {/* Product Selector */}
-              {showProductSelector && (
-                <div className="mb-4 border border-gray-300 rounded-lg p-3 bg-gray-50">
-                  <div className="relative mb-3">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                    <input
-                      type="text"
-                      placeholder="Search products..."
-                      value={productSearchTerm}
-                      onChange={(e) => setProductSearchTerm(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    />
-                  </div>
-                  <div className="max-h-48 overflow-y-auto space-y-1">
-                    {loadingProducts ? (
-                      <p className="text-sm text-gray-500 text-center py-2">Loading products...</p>
-                    ) : filteredProducts.length === 0 ? (
-                      <p className="text-sm text-gray-500 text-center py-2">No products found</p>
-                    ) : (
-                      filteredProducts.map(product => (
-                        <button
-                          key={product.id}
-                          type="button"
-                          onClick={() => handleAddProduct(product)}
-                          className="w-full text-left px-3 py-2 bg-white border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-300 transition-colors flex items-center gap-3"
-                        >
-                          <Package className="w-4 h-4 text-gray-400" />
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-gray-900">{product.name}</p>
-                            <p className="text-xs text-gray-500">{product.brand} - {product.category}</p>
-                          </div>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Mapped Products List */}
-              {productMappings.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center py-4">
-                  No products mapped to this service yet
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {productMappings.map((mapping) => (
-                    <div key={mapping.productId} className="p-3 bg-white border border-gray-200 rounded-lg space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <Package className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                          <p className="text-sm font-medium text-gray-900 truncate">{mapping.productName}</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveProduct(mapping.productId)}
-                          className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors flex-shrink-0"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="text-xs text-gray-600 block mb-1">Quantity</label>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={mapping.quantity || 0}
-                            onChange={(e) => handleUpdateMapping(mapping.productId, 'quantity', e.target.value)}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                            placeholder="0"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-600 block mb-1">Unit</label>
-                          <select
-                            value={mapping.unit || 'ml'}
-                            onChange={(e) => handleUpdateMapping(mapping.productId, 'unit', e.target.value)}
-                            className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          >
-                            <option value="ml">ml</option>
-                            <option value="g">g</option>
-                            <option value="pieces">pieces</option>
-                            <option value="units">units</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-600 block mb-1">% of Price</label>
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              step="0.1"
-                              value={mapping.percentage || 0}
-                              onChange={(e) => handleUpdateMapping(mapping.productId, 'percentage', e.target.value)}
-                              className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                              placeholder="0"
-                            />
-                            <span className="text-xs text-gray-500">%</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
                 </div>
               )}
             </div>

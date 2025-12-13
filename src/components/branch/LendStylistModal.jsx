@@ -4,13 +4,10 @@
  */
 
 import { useState, useEffect } from 'react';
-import { X, Send, Calendar, Building2, User } from 'lucide-react';
+import { X, Send, Calendar, Building2 } from 'lucide-react';
 import { getAllBranches } from '../../services/branchService';
-import { getUsersByBranch } from '../../services/userService';
 import { requestLendStylist } from '../../services/stylistLendingService';
 import { useAuth } from '../../context/AuthContext';
-import { USER_ROLES } from '../../utils/constants';
-import { getFullName } from '../../utils/helpers';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import toast from 'react-hot-toast';
 
@@ -24,12 +21,9 @@ const LendStylistModal = ({
   const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [loadingStylists, setLoadingStylists] = useState(false);
   const [branches, setBranches] = useState([]);
-  const [stylists, setStylists] = useState([]);
   const [formData, setFormData] = useState({
     fromBranchId: '', // Branch that will provide help
-    stylistId: '', // Selected stylist or 'any' for any available
     startDate: '',
     endDate: '',
     reason: ''
@@ -45,24 +39,13 @@ const LendStylistModal = ({
       
       setFormData({
         fromBranchId: '', // Branch to request help from
-        stylistId: '', // No default - user must select
         startDate: today.toISOString().split('T')[0],
         endDate: nextWeek.toISOString().split('T')[0],
         reason: ''
       });
-      setStylists([]);
     }
   }, [isOpen]);
 
-  // Fetch stylists when branch is selected
-  useEffect(() => {
-    if (formData.fromBranchId) {
-      fetchStylists(formData.fromBranchId);
-    } else {
-      setStylists([]);
-      setFormData(prev => ({ ...prev, stylistId: '' }));
-    }
-  }, [formData.fromBranchId]);
 
   const fetchBranches = async () => {
     try {
@@ -83,32 +66,6 @@ const LendStylistModal = ({
     }
   };
 
-  const fetchStylists = async (branchId) => {
-    try {
-      setLoadingStylists(true);
-      const branchUsers = await getUsersByBranch(branchId);
-      // Filter to only stylists
-      const branchStylists = branchUsers.filter(user => {
-        const userRoles = user.roles || (user.role ? [user.role] : []);
-        return userRoles.includes(USER_ROLES.STYLIST) && user.isActive !== false;
-      });
-      setStylists(branchStylists);
-      
-      // Reset stylist selection if previously selected stylist is not in the new list
-      if (formData.stylistId) {
-        const stylistExists = branchStylists.some(s => (s.id || s.uid) === formData.stylistId);
-        if (!stylistExists) {
-          setFormData(prev => ({ ...prev, stylistId: '' }));
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching stylists:', error);
-      toast.error('Failed to load stylists');
-      setStylists([]);
-    } finally {
-      setLoadingStylists(false);
-    }
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -120,11 +77,6 @@ const LendStylistModal = ({
     
     if (!formData.fromBranchId) {
       toast.error('Please select a branch to request help from');
-      return;
-    }
-
-    if (!formData.stylistId) {
-      toast.error('Please select a stylist to borrow');
       return;
     }
 
@@ -149,9 +101,9 @@ const LendStylistModal = ({
     try {
       setSaving(true);
       // Request help: fromBranchId = branch providing help, toBranchId = requesting branch (current)
-      // stylistId: selected stylist ID (required)
+      // stylistId: null - let the other branch decide which stylist to send
       await requestLendStylist(
-        formData.stylistId, // Selected stylist ID (required)
+        null, // No specific stylist - let the other branch decide
         formData.fromBranchId, // Branch that will provide the stylist
         requestingBranchId, // Current branch that needs help
         formData.startDate,
@@ -237,46 +189,6 @@ const LendStylistModal = ({
                 )}
               </div>
 
-              {/* Stylist Selection */}
-              {formData.fromBranchId && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    <User className="inline w-4 h-4 mr-1" />
-                    Select Stylist *
-                  </label>
-                  {loadingStylists ? (
-                    <div className="flex items-center gap-2 text-sm text-gray-500">
-                      <LoadingSpinner size="sm" />
-                      Loading stylists...
-                    </div>
-                  ) : stylists.length > 0 ? (
-                    <select
-                      value={formData.stylistId}
-                      onChange={(e) => setFormData({ ...formData, stylistId: e.target.value })}
-                      required
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    >
-                      <option value="">-- Select a stylist --</option>
-                      {stylists.map(stylist => {
-                        const stylistId = stylist.id || stylist.uid;
-                        return (
-                          <option key={stylistId} value={stylistId}>
-                            {getFullName(stylist)} {stylist.email ? `(${stylist.email})` : ''}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  ) : (
-                    <div className="w-full px-4 py-2 border border-red-300 rounded-lg bg-red-50">
-                      <p className="text-sm text-red-700">No stylists available in this branch</p>
-                    </div>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    Select the specific stylist you want to borrow from this branch.
-                  </p>
-                </div>
-              )}
-
               {/* Date Range */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -323,13 +235,6 @@ const LendStylistModal = ({
                 />
               </div>
 
-              {/* Info Banner */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
-                  <strong>Note:</strong> This will send a request to the selected branch manager. 
-                  They will receive your request and can approve to send one of their stylists to help at your branch.
-                </p>
-              </div>
             </>
           )}
         </form>

@@ -15,6 +15,7 @@ import {
   ToggleLeft,
   ToggleRight,
   Eye,
+  Power,
   Package,
   Banknote,
   Calendar,
@@ -1245,7 +1246,7 @@ const MasterProducts = () => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
                     Actions
                   </th>
                 </tr>
@@ -1335,32 +1336,29 @@ const MasterProducts = () => {
                     <td className="px-6 py-4">
                       <StatusBadge status={product.status} />
                     </td>
-                    <td className="px-6 py-4 text-center text-sm font-medium">
-                      <div className="flex justify-center space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
+                    <td className="px-6 py-4 text-right text-sm font-medium">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
                           onClick={() => openViewModal(product)}
-                          className="text-blue-600 hover:text-blue-800"
+                          className="text-blue-600 hover:text-blue-900"
+                          title="View Details"
                         >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
+                          <Eye className="w-5 h-5" />
+                        </button>
+                        <button
                           onClick={() => openEditModal(product)}
-                          className="text-green-600 hover:text-green-800"
+                          className="text-gray-600 hover:text-gray-900"
+                          title="Edit"
                         >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
+                          <Edit className="w-5 h-5" />
+                        </button>
+                        <button
                           onClick={() => openInactiveModal(product)}
-                          className={product.status === 'Active' ? 'text-orange-600 hover:text-orange-800' : 'text-green-600 hover:text-green-800'}
+                          className={product.status === 'Active' ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}
+                          title={product.status === 'Active' ? 'Deactivate' : 'Activate'}
                         >
-                          {product.status === 'Active' ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4" />}
-                        </Button>
+                          <Power className="w-5 h-5" />
+                        </button>
                       </div>
                     </td>
                   </tr>

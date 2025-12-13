@@ -3,8 +3,8 @@
  * Master service catalog that branches can configure pricing for
  */
 
-import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Power, Search } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Edit, Trash2, Power, Search, Scissors } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import {
   getAllServices,
@@ -15,6 +15,9 @@ import {
 } from '../../services/serviceManagementService';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import ServiceModal from '../../components/service/ServiceModal';
+import ConfirmModal from '../../components/ui/ConfirmModal';
+import { Card } from '../../components/ui/Card';
+import Button from '../../components/ui/Button';
 import toast from 'react-hot-toast';
 
 const ServiceTemplates = () => {
@@ -28,6 +31,13 @@ const ServiceTemplates = () => {
   const [showModal, setShowModal] = useState(false);
   const [selectedService, setSelectedService] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [serviceToDelete, setServiceToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(5);
 
   useEffect(() => {
     fetchServices();
@@ -35,6 +45,7 @@ const ServiceTemplates = () => {
 
   useEffect(() => {
     filterServices();
+    setCurrentPage(1); // Reset to first page when filters change
   }, [services, searchTerm, selectedCategory, showArchived]);
 
   const fetchServices = async () => {
@@ -74,6 +85,18 @@ const ServiceTemplates = () => {
     setFilteredServices(filtered);
   };
 
+  // Pagination calculations
+  const totalItems = filteredServices.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedServices = filteredServices.slice(startIndex, endIndex);
+
+  // Reset to first page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedCategory, showArchived]);
+
   const handleCreateService = () => {
     setSelectedService(null);
     setShowModal(true);
@@ -106,16 +129,24 @@ const ServiceTemplates = () => {
     }
   };
 
-  const handleDelete = async (service) => {
-    if (!window.confirm(`Delete service "${service.name}"?\n\nThis will remove it from all branches.`)) {
-      return;
-    }
+  const handleDelete = (service) => {
+    setServiceToDelete(service);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!serviceToDelete) return;
 
     try {
-      await deleteService(service.id, currentUser);
+      setDeleting(true);
+      await deleteService(serviceToDelete.id, currentUser);
       await fetchServices();
+      setShowDeleteModal(false);
+      setServiceToDelete(null);
     } catch (error) {
       console.error('Error deleting service:', error);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -138,7 +169,7 @@ const ServiceTemplates = () => {
           className="flex items-center gap-2 px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
         >
           <Plus className="w-5 h-5" />
-          Create Service
+          Add Service
         </button>
       </div>
 
@@ -192,128 +223,244 @@ const ServiceTemplates = () => {
       </div>
 
       {/* Services Table */}
-      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+      <Card>
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+          <table className="w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3">
                   Service
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
                   Category
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
                   Duration
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
                   Status
                 </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
                   Actions
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-        {filteredServices.length === 0 ? (
+              {paginatedServices.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="px-6 py-12 text-center text-gray-500">
-                    No services found
+                  <td colSpan="5" className="px-6 py-12 text-center">
+                    <div className="flex flex-col items-center justify-center">
+                      <Scissors className="h-12 w-12 text-gray-400 mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No services found</h3>
+                      <p className="text-gray-500 mb-4">
+                        {filteredServices.length === 0 
+                          ? "Try adjusting your search or filter criteria"
+                          : "No services match your current filters"
+                        }
+                      </p>
+                      <Button
+                        onClick={() => {
+                          setSearchTerm('');
+                          setSelectedCategory('All');
+                          setShowArchived(false);
+                        }}
+                        className="bg-[#160B53] hover:bg-[#12094A] text-white"
+                      >
+                        Clear All Filters
+                      </Button>
+                    </div>
                   </td>
                 </tr>
-        ) : (
-          filteredServices.map(service => (
-                  <tr key={service.id} className={`hover:bg-gray-50 transition-colors ${!service.isActive ? 'opacity-50' : ''}`}>
+              ) : (
+                paginatedServices.map(service => (
+                  <tr key={service.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        {service.imageURL && (
-                          <img 
-                            src={service.imageURL} 
-                            alt={service.name}
-                            className="w-12 h-12 rounded-lg object-cover"
-                          />
-                        )}
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">
-                      {service.name}
+                      <div className="flex items-center">
+                        <div className="flex-shrink-0 h-10 w-10">
+                          {service.imageURL ? (
+                            <img
+                              className="h-10 w-10 rounded-lg object-cover"
+                              src={service.imageURL}
+                              alt={service.name}
+                            />
+                          ) : (
+                            <div className="h-10 w-10 rounded-lg bg-gray-200 flex items-center justify-center">
+                              <Scissors className="h-5 w-5 text-gray-400" />
+                            </div>
+                          )}
+                        </div>
+                        <div className="ml-4 min-w-0 flex-1">
+                          <div className="text-sm font-medium text-gray-900 break-words">
+                            {service.name}
                           </div>
                           {service.description && (
-                            <div className="text-sm text-gray-500 line-clamp-1">
-                              {service.description}
+                            <div className="text-sm text-gray-500 break-words">
+                              {service.description?.substring(0, 60)}...
                             </div>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        {service.category}
-                      </span>
-                      {service.isChemical && (
-                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                    <td className="px-6 py-4 text-sm text-gray-900">
+                      <div className="space-y-1">
+                        <div className="break-words">{service.category}</div>
+                        {service.isChemical && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">
                             Chemical
-                        </span>
-                      )}
-                    </div>
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900">
-                      {service.duration} min
+                      <div className="break-words">{service.duration} min</div>
                     </td>
                     <td className="px-6 py-4">
-                    <button
-                      onClick={() => handleToggle(service)}
+                      <button
+                        onClick={() => handleToggle(service)}
                         className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                        service.isActive
+                          service.isActive
                             ? 'bg-green-100 text-green-800 hover:bg-green-200'
                             : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
-                      }`}
-                    >
+                        }`}
+                      >
                         <Power className="w-3 h-3" />
                         {service.isActive ? 'Active' : 'Archived'}
-                    </button>
+                      </button>
                     </td>
-                    <td className="px-6 py-4 text-right">
+                    <td className="px-6 py-4 text-right text-sm font-medium">
                       <div className="flex items-center justify-end gap-2">
-                  <button
-                    onClick={() => handleEditService(service)}
-                          className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                        <button
+                          onClick={() => handleEditService(service)}
+                          className="text-gray-600 hover:text-gray-900"
                           title="Edit"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(service)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        >
+                          <Edit className="w-5 h-5" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(service)}
+                          className="text-red-600 hover:text-red-900"
                           title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
-          ))
-        )}
+                ))
+              )}
             </tbody>
           </table>
         </div>
-      </div>
+        
+        {/* Pagination Controls */}
+        <div className="bg-white px-4 py-3 border-t border-gray-200">
+          <div className="flex flex-col space-y-3">
+            {/* Top row: Items per page and page info */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-600">Show</span>
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value));
+                    setCurrentPage(1);
+                  }}
+                  className="border border-gray-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-[#160B53] focus:border-[#160B53]"
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+                <span className="text-xs text-gray-600">per page</span>
+              </div>
 
-      {/* Summary */}
-      <div className="bg-white rounded-lg shadow-sm p-4">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-gray-600">
-            Showing {filteredServices.length} {showArchived ? 'services' : 'active services'}
-          </span>
-          <div className="flex items-center gap-4 text-gray-600">
-            <span>{services.filter(s => s.isActive).length} active</span>
-            <span>•</span>
-            <span>{services.filter(s => !s.isActive).length} archived</span>
+              <div className="text-xs text-gray-600">
+                Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+                <span className="font-medium">{Math.min(endIndex, totalItems)}</span> of{' '}
+                <span className="font-medium">{totalItems}</span> results
+              </div>
+            </div>
+
+            {/* Bottom row: Navigation buttons */}
+            <div className="flex items-center justify-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="px-2 py-1 text-xs min-w-[40px]"
+              >
+                First
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="px-2 py-1 text-xs min-w-[40px]"
+              >
+                Prev
+              </Button>
+              
+              {/* Page numbers */}
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(3, totalPages) }, (_, i) => {
+                  let pageNum;
+                  if (totalPages <= 3) {
+                    pageNum = i + 1;
+                  } else if (currentPage <= 2) {
+                    pageNum = i + 1;
+                  } else if (currentPage >= totalPages - 1) {
+                    pageNum = totalPages - 2 + i;
+                  } else {
+                    pageNum = currentPage - 1 + i;
+                  }
+                  
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? "primary" : "outline"}
+                      size="sm"
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`px-2 py-1 text-xs min-w-[32px] ${
+                        currentPage === pageNum 
+                          ? 'bg-[#160B53] hover:bg-[#12094A] text-white' 
+                          : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </Button>
+                  );
+                })}
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="px-2 py-1 text-xs min-w-[40px]"
+              >
+                Next
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="px-2 py-1 text-xs min-w-[40px]"
+              >
+                Last
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
+      </Card>
 
-      {/* Modal */}
+
+      {/* Service Modal */}
       {showModal && (
         <ServiceModal
           isOpen={showModal}
@@ -323,6 +470,26 @@ const ServiceTemplates = () => {
           loading={saving}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showDeleteModal}
+        onClose={() => {
+          setShowDeleteModal(false);
+          setServiceToDelete(null);
+        }}
+        onConfirm={confirmDelete}
+        title="Delete Service"
+        message={`Are you sure you want to delete "${serviceToDelete?.name}"?`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        type="danger"
+        loading={deleting}
+      >
+        <p className="text-sm text-red-600 mt-2 font-medium">
+          This will permanently remove the service from all branches. This action cannot be undone.
+        </p>
+      </ConfirmModal>
     </div>
   );
 };

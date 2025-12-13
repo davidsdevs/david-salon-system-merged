@@ -4,12 +4,13 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { Clock, User, Phone, Mail, Search, Filter, Calendar, MapPin } from 'lucide-react';
+import { Clock, User, Phone, Mail, Search, Filter, Calendar, MapPin, Scissors, Eye } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { collection, query, where, getDocs, getDoc, doc, onSnapshot, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, doc, onSnapshot, Timestamp, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { formatDate, formatTime } from '../../utils/helpers';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import CheckInDetails from '../../components/checkin/CheckInDetails';
 import toast from 'react-hot-toast';
 
 const StylistCheckIns = () => {
@@ -19,6 +20,8 @@ const StylistCheckIns = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('time-asc');
+  const [selectedCheckIn, setSelectedCheckIn] = useState(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
 
   useEffect(() => {
     if (!currentUser?.uid || !userBranch) {
@@ -308,6 +311,80 @@ const StylistCheckIns = () => {
     return status?.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') || 'Unknown';
   };
 
+  const getClientType = (checkIn) => {
+    // Check if walk-in
+    if (checkIn.isWalkIn === true) {
+      return { label: 'Walk-in', color: 'bg-green-100 text-green-700 border-green-200' };
+    }
+    
+    // Check if guest (no clientId)
+    if (!checkIn.clientId) {
+      return { label: 'Guest', color: 'bg-gray-100 text-gray-700 border-gray-200' };
+    }
+    
+    // Check service clientType (X-New, R-Regular, TR-Transfer, etc.)
+    // Using mobile app colors for consistency
+    if (checkIn.services && Array.isArray(checkIn.services) && checkIn.services.length > 0) {
+      // Get clientType from first service (usually all services have same clientType)
+      const clientType = checkIn.services[0]?.clientType;
+      if (clientType) {
+        if (clientType === 'X' || clientType === 'X-New' || clientType.startsWith('X')) {
+          return { 
+            label: 'X-New', 
+            color: 'border-[#FDE68A]',
+            style: { backgroundColor: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A' }
+          };
+        }
+        if (clientType === 'R' || clientType === 'R-Regular' || clientType.startsWith('R')) {
+          return { 
+            label: 'R-Regular', 
+            color: 'border-[#FBCFE8]',
+            style: { backgroundColor: '#FCE7F3', color: '#9F1239', borderColor: '#FBCFE8' }
+          };
+        }
+        if (clientType === 'TR' || clientType.startsWith('TR')) {
+          return { 
+            label: 'TR-Transfer', 
+            color: 'border-[#99F6E4]',
+            style: { backgroundColor: '#CCFBF1', color: '#115E59', borderColor: '#99F6E4' }
+          };
+        }
+        // Return the clientType as-is if it doesn't match known patterns
+        return { label: clientType, color: 'bg-indigo-100 text-indigo-700 border-indigo-200' };
+      }
+    }
+    
+    // Check check-in level clientType
+    if (checkIn.clientType) {
+      const clientType = checkIn.clientType;
+      if (clientType === 'X' || clientType === 'X-New' || clientType.startsWith('X')) {
+        return { 
+          label: 'X-New', 
+          color: 'border-[#FDE68A]',
+          style: { backgroundColor: '#FEF3C7', color: '#92400E', borderColor: '#FDE68A' }
+        };
+      }
+      if (clientType === 'R' || clientType === 'R-Regular' || clientType.startsWith('R')) {
+        return { 
+          label: 'R-Regular', 
+          color: 'border-[#FBCFE8]',
+          style: { backgroundColor: '#FCE7F3', color: '#9F1239', borderColor: '#FBCFE8' }
+        };
+      }
+      if (clientType === 'TR' || clientType.startsWith('TR')) {
+        return { 
+          label: 'TR-Transfer', 
+          color: 'border-[#99F6E4]',
+          style: { backgroundColor: '#CCFBF1', color: '#115E59', borderColor: '#99F6E4' }
+        };
+      }
+      return { label: clientType, color: 'bg-indigo-100 text-indigo-700 border-indigo-200' };
+    }
+    
+    // Default: Registered client
+    return { label: 'Registered', color: 'bg-primary-100 text-primary-700 border-primary-200' };
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -387,60 +464,169 @@ const StylistCheckIns = () => {
                       <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center">
                         <User className="w-5 h-5 text-primary-600" />
                       </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{checkIn.clientName || 'Guest Client'}</h3>
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(checkIn.status)}`}>
-                          {getStatusLabel(checkIn.status)}
-                        </span>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-semibold text-gray-900">{checkIn.clientName || 'Guest Client'}</h3>
+                          {(() => {
+                            const clientType = getClientType(checkIn);
+                            return (
+                              <span 
+                                className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${clientType.color || ''}`}
+                                style={clientType.style || {}}
+                              >
+                                {clientType.label}
+                              </span>
+                            );
+                          })()}
+                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(checkIn.status)}`}>
+                            {getStatusLabel(checkIn.status)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                     
-                    <div className="ml-13 space-y-2">
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <Clock className="w-4 h-4" />
-                        <span>Arrived: {formatTime(checkIn.arrivedAt)}</span>
-                        <span className="text-gray-400">•</span>
-                        <span>{formatDate(checkIn.arrivedAt)}</span>
+                    <div className="ml-13 space-y-3">
+                      {/* Services - Must See */}
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Scissors className="w-4 h-4 text-primary-600" />
+                          <span className="text-sm font-semibold text-gray-900">Services</span>
+                        </div>
+                        {checkIn.services && Array.isArray(checkIn.services) && checkIn.services.length > 0 ? (
+                          <div className="space-y-2">
+                            {checkIn.services.map((service, index) => {
+                              const isMyService = service.stylistId === currentUser.uid;
+                              return (
+                                <div 
+                                  key={index} 
+                                  className={`rounded-lg p-3 border-2 ${
+                                    isMyService 
+                                      ? 'bg-primary-100 border-primary-400' 
+                                      : 'bg-gray-50 border-gray-200'
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between">
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <div className={`font-semibold text-sm ${
+                                          isMyService ? 'text-primary-900' : 'text-gray-900'
+                                        }`}>
+                                          {service.serviceName || 'Unknown Service'}
+                                        </div>
+                                        {isMyService && (
+                                          <span className="px-2 py-0.5 bg-primary-600 text-white text-xs rounded-full font-medium">
+                                            Your Service
+                                          </span>
+                                        )}
+                                      </div>
+                                      {service.price && (
+                                        <div className={`text-xs mt-1 ${
+                                          isMyService ? 'text-primary-700' : 'text-gray-600'
+                                        }`}>
+                                          ₱{parseFloat(service.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {service.stylistName && service.stylistId !== currentUser.uid && (
+                                      <div className="text-xs text-gray-500 ml-2">
+                                        {service.stylistName}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : checkIn.serviceName ? (
+                          <div className="bg-primary-100 border-2 border-primary-400 rounded-lg p-3">
+                            <div className="flex items-center gap-2">
+                              <div className="font-semibold text-primary-900 text-sm">
+                                {checkIn.serviceName}
+                              </div>
+                              <span className="px-2 py-0.5 bg-primary-600 text-white text-xs rounded-full font-medium">
+                                Your Service
+                              </span>
+                            </div>
+                            {checkIn.servicePrice && (
+                              <div className="text-xs text-primary-700 mt-1">
+                                ₱{parseFloat(checkIn.servicePrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-500 italic">No services listed</div>
+                        )}
                       </div>
-                      
-                      {checkIn.clientPhone && (
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Phone className="w-4 h-4" />
-                          <a href={`tel:${checkIn.clientPhone}`} className="text-primary-600 hover:underline">
-                            {checkIn.clientPhone}
-                          </a>
-                        </div>
-                      )}
-                      
-                      {checkIn.clientEmail && (
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Mail className="w-4 h-4" />
-                          <a href={`mailto:${checkIn.clientEmail}`} className="text-primary-600 hover:underline truncate">
-                            {checkIn.clientEmail}
-                          </a>
-                        </div>
-                      )}
 
-                      {checkIn.appointmentId && (
+                      <div className="space-y-2 pt-2 border-t border-gray-200">
                         <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Calendar className="w-4 h-4" />
-                          <span>Appointment ID: {checkIn.appointmentId.substring(0, 8)}...</span>
+                          <Clock className="w-4 h-4" />
+                          <span>Arrived: {formatTime(checkIn.arrivedAt)}</span>
+                          <span className="text-gray-400">•</span>
+                          <span>{formatDate(checkIn.arrivedAt)}</span>
                         </div>
-                      )}
+                        
+                        {checkIn.clientPhone && (
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <Phone className="w-4 h-4" />
+                            <a href={`tel:${checkIn.clientPhone}`} className="text-primary-600 hover:underline">
+                              {checkIn.clientPhone}
+                            </a>
+                          </div>
+                        )}
+                        
+                        {checkIn.clientEmail && (
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <Mail className="w-4 h-4" />
+                            <a href={`mailto:${checkIn.clientEmail}`} className="text-primary-600 hover:underline truncate">
+                              {checkIn.clientEmail}
+                            </a>
+                          </div>
+                        )}
 
-                      {checkIn.notes && (
-                        <div className="mt-2 p-2 bg-gray-50 rounded text-sm text-gray-700">
-                          <strong>Notes:</strong> {checkIn.notes}
-                        </div>
-                      )}
+                        {checkIn.appointmentId && (
+                          <div className="flex items-center gap-2 text-sm text-gray-600">
+                            <Calendar className="w-4 h-4" />
+                            <span>Appointment ID: {checkIn.appointmentId.substring(0, 8)}...</span>
+                          </div>
+                        )}
+
+                        {checkIn.notes && (
+                          <div className="mt-2 p-2 bg-gray-50 rounded text-sm text-gray-700">
+                            <strong>Notes:</strong> {checkIn.notes}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
+                  <button
+                    onClick={() => {
+                      setSelectedCheckIn(checkIn);
+                      setShowDetailsModal(true);
+                    }}
+                    className="p-2 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                    title="View Full Details"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             ))
           )}
         </div>
       </div>
+
+      {/* Check-In Details Modal */}
+      {showDetailsModal && selectedCheckIn && (
+        <CheckInDetails
+          checkIn={selectedCheckIn}
+          currentUserId={currentUser?.uid}
+          onClose={() => {
+            setShowDetailsModal(false);
+            setSelectedCheckIn(null);
+          }}
+        />
+      )}
     </div>
   );
 };

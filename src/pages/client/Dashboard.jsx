@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, Clock, Star, Users, Gift, ChevronRight, Plus, ShoppingBag } from 'lucide-react';
+import { Calendar, Clock, Star, Users, Gift, ChevronRight, Plus, ShoppingBag, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   getAppointmentsByClient,
@@ -15,6 +15,8 @@ import { getAllBranchLoyaltyPoints } from '../../services/loyaltyService';
 import { getAllReferralCodes, getReferralStats } from '../../services/referralService';
 import { formatDate, formatTime, getFullName } from '../../utils/helpers';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import AppointmentCard from '../../components/appointment/AppointmentCard';
+import AppointmentDetails from '../../components/appointment/AppointmentDetails';
 import { ROUTES } from '../../utils/constants';
 
 const ClientDashboard = () => {
@@ -26,6 +28,9 @@ const ClientDashboard = () => {
   const [referralCount, setReferralCount] = useState(0);
   const [nextAppointment, setNextAppointment] = useState(null);
   const [upcomingAppointments, setUpcomingAppointments] = useState([]);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [selectedDetailAppointment, setSelectedDetailAppointment] = useState(null);
 
   useEffect(() => {
     if (currentUser?.uid) {
@@ -64,8 +69,20 @@ const ClientDashboard = () => {
         })
         .sort((a, b) => new Date(a.appointmentDate) - new Date(b.appointmentDate));
 
+      // Sort by latest first (by createdAt, then by appointmentDate)
+      upcoming.sort((a, b) => {
+        const aCreated = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bCreated = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (bCreated !== aCreated) {
+          return bCreated - aCreated; // Latest first
+        }
+        const aDate = new Date(a.appointmentDate).getTime();
+        const bDate = new Date(b.appointmentDate).getTime();
+        return bDate - aDate; // Latest first
+      });
+      
       setNextAppointment(upcoming[0] || null);
-      setUpcomingAppointments(upcoming.slice(0, 3));
+      setUpcomingAppointments(upcoming);
 
       // Fetch referral stats
       try {
@@ -137,6 +154,14 @@ const ClientDashboard = () => {
           {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
         </p>
       </div>
+
+      {/* Appointment Details Modal (Client) */}
+      {showDetailsModal && selectedDetailAppointment && (
+        <AppointmentDetails
+          appointment={selectedDetailAppointment}
+          onClose={() => { setShowDetailsModal(false); setSelectedDetailAppointment(null); }}
+        />
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -250,34 +275,37 @@ const ClientDashboard = () => {
             </button>
           </div>
           
-          <div className="divide-y divide-gray-100">
-            {upcomingAppointments.map((appointment) => (
-              <div key={appointment.id} className="p-4 hover:bg-gray-50 transition-colors">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="text-center min-w-[60px]">
-                      <p className="text-lg font-semibold text-gray-900">
-                        {formatTime(appointment.appointmentDate)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {formatDate(appointment.appointmentDate)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        {appointment.branchName || 'Salon'}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        {appointment.services?.map(s => s.serviceName).join(', ') || appointment.serviceName || 'Service'}
-                      </p>
-                    </div>
-                  </div>
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(appointment.status)}`}>
-                    {getStatusLabel(appointment.status)}
-                  </span>
-                </div>
+          <div className="p-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {(showAllUpcoming ? upcomingAppointments : upcomingAppointments.slice(0, 3)).map((appointment) => (
+                <AppointmentCard
+                  key={appointment.id}
+                  appointment={appointment}
+                  showActions={false}
+                  onView={(apt) => { setSelectedDetailAppointment(apt); setShowDetailsModal(true); }}
+                />
+              ))}
+            </div>
+            {upcomingAppointments.length > 3 && (
+              <div className="mt-4 text-center">
+                <button
+                  onClick={() => setShowAllUpcoming(!showAllUpcoming)}
+                  className="text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1 mx-auto"
+                >
+                  {showAllUpcoming ? (
+                    <>
+                      <ChevronUp className="w-4 h-4" />
+                      Show Less
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="w-4 h-4" />
+                      Show More ({upcomingAppointments.length - 3} more)
+                    </>
+                  )}
+                </button>
               </div>
-            ))}
+            )}
           </div>
         </div>
       )}
@@ -331,6 +359,7 @@ const ClientDashboard = () => {
       </div>
     </div>
   );
+  // Note: unreachable as return is inside earlier block; ensure we render modal outside return block
 };
 
 export default ClientDashboard;

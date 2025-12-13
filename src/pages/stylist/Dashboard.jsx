@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, Clock, User, CheckCircle, AlertCircle, ChevronRight } from 'lucide-react';
+import { Calendar, Clock, User, CheckCircle, AlertCircle, ChevronRight, Tag } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   getAppointmentsByStylist,
@@ -15,14 +15,17 @@ import {
 import { formatDate, formatTime, getFullName } from '../../utils/helpers';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import { ROUTES } from '../../utils/constants';
+import { collection, query, where, getDocs, getDoc, doc, Timestamp, orderBy } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 
 const StylistDashboard = () => {
-  const { currentUser, userData } = useAuth();
+  const { currentUser, userData, userBranch } = useAuth();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [todayAppointments, setTodayAppointments] = useState([]);
   const [nextAppointment, setNextAppointment] = useState(null);
+  const [clientTypeStats, setClientTypeStats] = useState({ X: 0, R: 0, TR: 0 });
 
   useEffect(() => {
     if (currentUser?.uid) {
@@ -66,10 +69,114 @@ const StylistDashboard = () => {
       
       setNextAppointment(upcoming[0] || null);
       
+      // Fetch today's check-ins for client type analytics
+      await fetchClientTypeAnalytics();
+      
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchClientTypeAnalytics = async () => {
+    try {
+      if (!currentUser?.uid || !userBranch) return;
+
+      const checkInsRef = collection(db, 'check-in');
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      let snapshot;
+      try {
+        const q = query(
+          checkInsRef,
+          where('branchId', '==', userBranch),
+          where('arrivedAt', '>=', Timestamp.fromDate(today)),
+          where('arrivedAt', '<', Timestamp.fromDate(tomorrow)),
+          orderBy('arrivedAt', 'asc')
+        );
+        snapshot = await getDocs(q);
+      } catch (orderByError) {
+        // If orderBy fails (missing index), fetch without orderBy
+        const q = query(
+          checkInsRef,
+          where('branchId', '==', userBranch),
+          where('arrivedAt', '>=', Timestamp.fromDate(today)),
+          where('arrivedAt', '<', Timestamp.fromDate(tomorrow))
+        );
+        snapshot = await getDocs(q);
+      }
+
+      const counts = { X: 0, R: 0, TR: 0 };
+
+      for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+        
+        // Check if this check-in belongs to the current stylist
+        let isStylistCheckIn = false;
+        
+        // Check stylistId field directly
+        if (data.stylistId === currentUser.uid) {
+          isStylistCheckIn = true;
+        }
+        
+        // Check services array for stylistId
+        if (data.services && Array.isArray(data.services)) {
+          const hasStylist = data.services.some(service => service.stylistId === currentUser.uid);
+          if (hasStylist) {
+            isStylistCheckIn = true;
+          }
+        }
+        
+        // If still not found, check appointment
+        if (!isStylistCheckIn && data.appointmentId) {
+          try {
+            const appointmentRef = doc(db, 'appointments', data.appointmentId);
+            const appointmentSnap = await getDoc(appointmentRef);
+            if (appointmentSnap.exists()) {
+              const appointmentData = appointmentSnap.data();
+              isStylistCheckIn = appointmentData.stylistId === currentUser.uid ||
+                                 (appointmentData.services && appointmentData.services.some(s => s.stylistId === currentUser.uid));
+            }
+          } catch (error) {
+            // Skip if appointment fetch fails
+          }
+        }
+
+        // Only count check-ins assigned to this stylist
+        if (isStylistCheckIn) {
+          // Check service clientType
+          if (data.services && Array.isArray(data.services) && data.services.length > 0) {
+            const clientType = data.services[0]?.clientType;
+            if (clientType) {
+              if (clientType === 'X' || clientType === 'X-New' || clientType.startsWith('X')) {
+                counts.X++;
+              } else if (clientType === 'R' || clientType === 'R-Regular' || clientType.startsWith('R')) {
+                counts.R++;
+              } else if (clientType === 'TR' || clientType.startsWith('TR')) {
+                counts.TR++;
+              }
+            }
+          } else if (data.clientType) {
+            // Check check-in level clientType
+            const clientType = data.clientType;
+            if (clientType === 'X' || clientType === 'X-New' || clientType.startsWith('X')) {
+              counts.X++;
+            } else if (clientType === 'R' || clientType === 'R-Regular' || clientType.startsWith('R')) {
+              counts.R++;
+            } else if (clientType === 'TR' || clientType.startsWith('TR')) {
+              counts.TR++;
+            }
+          }
+        }
+      }
+
+      setClientTypeStats(counts);
+    } catch (error) {
+      console.error('Error fetching client type analytics:', error);
     }
   };
 
@@ -166,6 +273,63 @@ const StylistDashboard = () => {
             </div>
             <div className="p-3 bg-green-100 rounded-full">
               <CheckCircle className="w-6 h-6 text-green-600" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Client Type Analytics */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+          <Tag className="w-5 h-5 text-primary-600" />
+          Today's Client Types
+        </h2>
+        <div className="grid grid-cols-3 gap-4">
+          {/* X-New - Yellow/Amber (matching mobile) */}
+          <div 
+            className="rounded-lg p-4 border"
+            style={{ backgroundColor: '#FEF3C7', borderColor: '#FDE68A' }}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium" style={{ color: '#92400E' }}>X-New</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: '#92400E' }}>{clientTypeStats.X}</p>
+              </div>
+              <div className="p-2 rounded-full" style={{ backgroundColor: '#FDE68A' }}>
+                <Tag className="w-5 h-5" style={{ color: '#92400E' }} />
+              </div>
+            </div>
+          </div>
+          
+          {/* R-Regular - Pink (matching mobile) */}
+          <div 
+            className="rounded-lg p-4 border"
+            style={{ backgroundColor: '#FCE7F3', borderColor: '#FBCFE8' }}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium" style={{ color: '#9F1239' }}>R-Regular</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: '#9F1239' }}>{clientTypeStats.R}</p>
+              </div>
+              <div className="p-2 rounded-full" style={{ backgroundColor: '#FBCFE8' }}>
+                <Tag className="w-5 h-5" style={{ color: '#9F1239' }} />
+              </div>
+            </div>
+          </div>
+          
+          {/* TR-Transfer - Teal (matching mobile) */}
+          <div 
+            className="rounded-lg p-4 border"
+            style={{ backgroundColor: '#CCFBF1', borderColor: '#99F6E4' }}
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium" style={{ color: '#115E59' }}>TR-Transfer</p>
+                <p className="text-2xl font-bold mt-1" style={{ color: '#115E59' }}>{clientTypeStats.TR}</p>
+              </div>
+              <div className="p-2 rounded-full" style={{ backgroundColor: '#99F6E4' }}>
+                <Tag className="w-5 h-5" style={{ color: '#115E59' }} />
+              </div>
             </div>
           </div>
         </div>
@@ -268,39 +432,6 @@ const StylistDashboard = () => {
             </div>
           )}
         </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <button
-          onClick={() => navigate(ROUTES.STYLIST_APPOINTMENTS)}
-          className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-left hover:border-primary-300 hover:shadow transition-all"
-        >
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 rounded-lg">
-              <Calendar className="w-6 h-6 text-primary-600" />
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">View Appointments</p>
-              <p className="text-sm text-gray-500">Manage your schedule</p>
-            </div>
-          </div>
-        </button>
-        
-        <button
-          onClick={() => navigate('/stylist/leave-management')}
-          className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-left hover:border-primary-300 hover:shadow transition-all"
-        >
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-green-100 rounded-lg">
-              <Clock className="w-6 h-6 text-green-600" />
-            </div>
-            <div>
-              <p className="font-medium text-gray-900">Leave Requests</p>
-              <p className="text-sm text-gray-500">Request time off</p>
-            </div>
-          </div>
-        </button>
       </div>
     </div>
   );
