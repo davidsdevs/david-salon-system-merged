@@ -1,4 +1,4 @@
-// src/pages/02_OperationalManager/PurchaseOrders.jsx
+// Purchase Orders Approval Page for Overall Inventory Controller
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -18,22 +18,18 @@ import {
   FileText,
   X,
   Truck,
-  Home,
   Calendar,
-  Building2,
-  BarChart3,
-  UserCog
+  Package,
+  TrendingDown,
+  TrendingUp
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { collection, query, where, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { inventoryService } from '../../services/inventoryService';
-import { Package, TrendingDown, TrendingUp } from 'lucide-react';
 
-const PurchaseOrders = () => {
+const OverallInventoryControllerPurchaseOrders = () => {
   const { userData } = useAuth();
-
-  
 
   // Data states
   const [purchaseOrders, setPurchaseOrders] = useState([]);
@@ -50,8 +46,11 @@ const PurchaseOrders = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [branchStocks, setBranchStocks] = useState([]);
   const [loadingStocks, setLoadingStocks] = useState(false);
+  const [isConfirmApproveModalOpen, setIsConfirmApproveModalOpen] = useState(false);
+  const [isConfirmRejectModalOpen, setIsConfirmRejectModalOpen] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState(null);
 
-  // Load purchase orders for viewing only (approval is now handled by Overall Inventory Controller)
+  // Load purchase orders that need approval (created by Inventory Controller, status = Received)
   useEffect(() => {
     loadPurchaseOrders();
   }, []);
@@ -157,12 +156,20 @@ const PurchaseOrders = () => {
     }
   };
 
-  // Handle approve order
-  const handleApproveOrder = async (orderId) => {
+  // Open approve confirmation modal
+  const handleOpenApproveModal = (orderId) => {
+    setPendingOrderId(orderId);
+    setIsConfirmApproveModalOpen(true);
+  };
+
+  // Handle approve order (after confirmation)
+  const handleApproveOrder = async () => {
+    if (!pendingOrderId) return;
+    
     try {
       setIsProcessing(true);
       setError(null);
-      const orderRef = doc(db, 'purchaseOrders', orderId);
+      const orderRef = doc(db, 'purchaseOrders', pendingOrderId);
       await updateDoc(orderRef, {
         status: 'In Transit',
         approvedBy: userData.uid || userData.id,
@@ -173,9 +180,11 @@ const PurchaseOrders = () => {
         updatedAt: serverTimestamp()
       });
       await loadPurchaseOrders();
+      setIsConfirmApproveModalOpen(false);
       setIsDetailsModalOpen(false);
       setSelectedOrder(null);
       setBranchStocks([]);
+      setPendingOrderId(null);
     } catch (err) {
       console.error('Error approving order:', err);
       setError('Failed to approve order. Please try again.');
@@ -191,7 +200,16 @@ const PurchaseOrders = () => {
     setIsRejectModalOpen(true);
   };
 
-  // Handle reject order with note
+  // Handle reject order confirmation (opens confirmation modal after note is entered)
+  const handleRejectOrderConfirm = () => {
+    if (!selectedOrder || !rejectionNote.trim()) {
+      setError('Rejection note is required');
+      return;
+    }
+    setIsConfirmRejectModalOpen(true);
+  };
+
+  // Handle reject order with note (after confirmation)
   const handleRejectOrder = async () => {
     if (!selectedOrder || !rejectionNote.trim()) {
       setError('Rejection note is required');
@@ -213,6 +231,7 @@ const PurchaseOrders = () => {
         updatedAt: serverTimestamp()
       });
       await loadPurchaseOrders();
+      setIsConfirmRejectModalOpen(false);
       setIsRejectModalOpen(false);
       setIsDetailsModalOpen(false);
       setSelectedOrder(null);
@@ -225,9 +244,9 @@ const PurchaseOrders = () => {
     }
   };
 
-  // Check if order can be approved/rejected (Pending or Received status)
+  // Check if order can be approved/rejected (Only Pending status - Received orders cannot be approved again)
   const canApproveOrReject = (order) => {
-    return order.status === 'Pending' || order.status === 'Received';
+    return order.status === 'Pending';
   };
 
   // Load branch stocks when viewing order details
@@ -287,12 +306,10 @@ const PurchaseOrders = () => {
 
   if (loading && purchaseOrders.length === 0) {
     return (
-      
       <div className="flex items-center justify-center h-64">
         <RefreshCw className="h-8 w-8 animate-spin text-[#160B53]" />
         <span className="ml-2 text-gray-600">Loading purchase orders...</span>
       </div>
-      
     );
   }
 
@@ -302,8 +319,8 @@ const PurchaseOrders = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Purchase Orders</h1>
-          <p className="text-gray-600">View purchase orders from Inventory Controllers (Approval handled by Overall Inventory Controller)</p>
+          <h1 className="text-2xl font-bold text-gray-900">Purchase Orders Approval</h1>
+          <p className="text-gray-600">Review and approve/reject purchase orders from Inventory Controllers</p>
         </div>
       </div>
 
@@ -500,7 +517,26 @@ const PurchaseOrders = () => {
                           <Eye className="h-3 w-3" />
                           View
                         </Button>
-                        {/* Approval functionality moved to Overall Inventory Controller */}
+                        {canApproveOrReject(order) && (
+                          <>
+                            <Button
+                              size="sm"
+                              onClick={() => handleOpenApproveModal(order.id)}
+                              disabled={isProcessing}
+                              className="bg-green-600 text-white hover:bg-green-700"
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => handleOpenRejectModal(order)}
+                              disabled={isProcessing}
+                              className="bg-red-600 text-white hover:bg-red-700"
+                            >
+                              Reject
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -718,6 +754,24 @@ const PurchaseOrders = () => {
           {/* Modal Footer */}
           <div className="border-t border-gray-200 p-6 bg-gray-50">
             <div className="flex justify-end gap-3">
+              {canApproveOrReject(selectedOrder) && (
+                <>
+                  <Button
+                    onClick={() => handleOpenRejectModal(selectedOrder)}
+                    disabled={isProcessing}
+                    className="bg-red-600 text-white hover:bg-red-700"
+                  >
+                    Reject
+                  </Button>
+                  <Button
+                    onClick={() => handleOpenApproveModal(selectedOrder.id)}
+                    disabled={isProcessing}
+                    className="bg-green-600 text-white hover:bg-green-700"
+                  >
+                    Approve
+                  </Button>
+                </>
+              )}
               <Button
                 variant="outline"
                 onClick={() => {
@@ -817,8 +871,221 @@ const PurchaseOrders = () => {
                 Cancel
               </Button>
               <Button
-                onClick={handleRejectOrder}
+                onClick={handleRejectOrderConfirm}
                 disabled={isProcessing || !rejectionNote.trim()}
+                className="bg-red-600 text-white hover:bg-red-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <XCircle className="h-4 w-4" />
+                Continue to Confirm
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Approve Confirmation Modal */}
+    {isConfirmApproveModalOpen && pendingOrderId && (() => {
+      const orderToApprove = purchaseOrders.find(o => o.id === pendingOrderId);
+      if (!orderToApprove) return null;
+      
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-100">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-white/20 rounded-lg">
+                    <CheckCircle className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold">Confirm Approval</h2>
+                    <p className="text-white/90 text-sm mt-1">Are you sure you want to approve this purchase order?</p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setIsConfirmApproveModalOpen(false);
+                    setPendingOrderId(null);
+                  }}
+                  className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              <div className="space-y-4">
+                {/* Order Summary */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <h3 className="font-semibold text-gray-900 mb-3">Order Summary</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Order ID:</span>
+                      <span className="font-medium text-gray-900">{orderToApprove.orderId || orderToApprove.id}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Supplier:</span>
+                      <span className="font-medium text-gray-900">{orderToApprove.supplierName || 'Unknown'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Order Date:</span>
+                      <span className="font-medium text-gray-900">
+                        {orderToApprove.orderDate ? format(new Date(orderToApprove.orderDate), 'MMM dd, yyyy') : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Expected Delivery:</span>
+                      <span className="font-medium text-gray-900">
+                        {orderToApprove.expectedDelivery ? format(new Date(orderToApprove.expectedDelivery), 'MMM dd, yyyy') : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Number of Items:</span>
+                      <span className="font-medium text-gray-900">{orderToApprove.items?.length || 0}</span>
+                    </div>
+                    <div className="flex justify-between pt-2 border-t border-gray-300">
+                      <span className="font-semibold text-gray-900">Total Amount:</span>
+                      <span className="text-lg font-bold text-green-600">₱{(orderToApprove.totalAmount || 0).toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p className="text-sm text-blue-900">
+                    <strong>Note:</strong> Approving this order will change its status to "In Transit" and notify the Inventory Controller. 
+                    This action cannot be undone.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-gray-200 p-6 bg-gray-50">
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsConfirmApproveModalOpen(false);
+                    setPendingOrderId(null);
+                  }}
+                  disabled={isProcessing}
+                  className="border-gray-300 text-gray-700 hover:bg-gray-100"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleApproveOrder}
+                  disabled={isProcessing}
+                  className="bg-green-600 text-white hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isProcessing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Approving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-4 w-4" />
+                      Confirm Approval
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
+
+    {/* Reject Confirmation Modal */}
+    {isConfirmRejectModalOpen && selectedOrder && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300 p-4">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-100">
+          {/* Modal Header */}
+          <div className="bg-gradient-to-r from-red-600 to-red-700 text-white p-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="p-2 bg-white/20 rounded-lg">
+                  <XCircle className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold">Confirm Rejection</h2>
+                  <p className="text-white/90 text-sm mt-1">Are you sure you want to reject this purchase order?</p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setIsConfirmRejectModalOpen(false);
+                }}
+                className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Modal Content */}
+          <div className="p-6">
+            <div className="space-y-4">
+              {/* Order Summary */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">Order Summary</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Order ID:</span>
+                    <span className="font-medium text-gray-900">{selectedOrder.orderId || selectedOrder.id}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Supplier:</span>
+                    <span className="font-medium text-gray-900">{selectedOrder.supplierName || 'Unknown'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Total Amount:</span>
+                    <span className="font-medium text-gray-900">₱{(selectedOrder.totalAmount || 0).toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rejection Note Preview */}
+              <div className="bg-red-50 border-2 border-red-200 rounded-lg p-4">
+                <h3 className="font-semibold text-red-900 mb-2">Rejection Reason</h3>
+                <p className="text-sm text-red-800 whitespace-pre-wrap">{rejectionNote}</p>
+                <p className="text-xs text-red-600 mt-2">
+                  <strong>Note:</strong> This rejection reason will be visible to the Inventory Controller and Branch Manager.
+                </p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm text-blue-900">
+                  <strong>Warning:</strong> Rejecting this order will change its status to "Rejected" and notify the Inventory Controller. 
+                  This action cannot be undone.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Modal Footer */}
+          <div className="border-t border-gray-200 p-6 bg-gray-50">
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsConfirmRejectModalOpen(false);
+                }}
+                disabled={isProcessing}
+                className="border-gray-300 text-gray-700 hover:bg-gray-100"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleRejectOrder}
+                disabled={isProcessing}
                 className="bg-red-600 text-white hover:bg-red-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isProcessing ? (
@@ -842,5 +1109,6 @@ const PurchaseOrders = () => {
   );
 };
 
-export default PurchaseOrders;
+export default OverallInventoryControllerPurchaseOrders;
+
 

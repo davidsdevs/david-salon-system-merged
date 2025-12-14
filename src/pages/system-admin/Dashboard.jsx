@@ -1,6 +1,15 @@
 import { Users, Building2, Calendar, TrendingUp } from 'lucide-react';
+import { useEffect } from 'react';
 
 const SystemAdminDashboard = () => {
+  // Set page title with role prefix
+  useEffect(() => {
+    document.title = 'System Admin - Dashboard | DSMS';
+    return () => {
+      document.title = 'DSMS - David\'s Salon Management System';
+    };
+  }, []);
+
   const stats = [
     { label: 'Total Users', value: '234', icon: Users, color: 'bg-blue-500' },
     { label: 'Active Branches', value: '12', icon: Building2, color: 'bg-green-500' },

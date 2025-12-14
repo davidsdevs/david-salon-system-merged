@@ -235,8 +235,7 @@ const BranchStaffFormModal = ({ staff, branchId, branchName, onClose, onSave }) 
                   value={formData.email}
                   onChange={handleChange}
                   required
-                  disabled={!!staff}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:bg-gray-100"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   placeholder="john@davidsalon.com"
                 />
               </div>

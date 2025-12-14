@@ -3,6 +3,7 @@ import Modal from './ui/Modal';
 import Button from './ui/Button';
 import { Upload, Download, AlertCircle, CheckCircle } from 'lucide-react';
 import { format } from 'date-fns';
+import * as XLSX from 'xlsx';
 
 const ImportModal = ({ 
   isOpen, 
@@ -85,10 +86,45 @@ const ImportModal = ({
           }
         }
       } else {
-        // For Excel files, we'd need to use a library like xlsx
-        setError('Excel import requires additional setup. Please use CSV format for now.');
-        setLoading(false);
-        return;
+        // Parse Excel file using xlsx
+        const arrayBuffer = await file.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        
+        if (jsonData.length === 0) {
+          setError('Excel file is empty');
+          setLoading(false);
+          return;
+        }
+        
+        // First row should be headers
+        const headers = jsonData[0].map(h => String(h).trim());
+        
+        // Validate headers
+        const missingHeaders = templateColumns.filter(col => !headers.includes(col));
+        if (missingHeaders.length > 0) {
+          setError(`Missing required columns: ${missingHeaders.join(', ')}`);
+          setLoading(false);
+          return;
+        }
+        
+        // Parse data rows
+        for (let i = 1; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          if (!row || row.length === 0) continue;
+          
+          const rowData = {};
+          headers.forEach((header, index) => {
+            rowData[header] = row[index] !== undefined ? String(row[index]).trim() : '';
+          });
+          
+          // Only add row if it has at least one non-empty value
+          if (Object.values(rowData).some(v => v)) {
+            data.push(rowData);
+          }
+        }
       }
 
       // Validate data if validation rules provided

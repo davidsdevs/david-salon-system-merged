@@ -8,7 +8,7 @@ import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Calendar, Tag } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { getAllPromotions, createPromotion, updatePromotion, deletePromotion } from '../../services/promotionService';
-import { getBranches } from '../../services/branchService';
+import { getAllBranches } from '../../services/branchService';
 import { Card } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -26,16 +26,22 @@ const Promotions = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedPromotion, setSelectedPromotion] = useState(null);
   const [formData, setFormData] = useState({
-    name: '',
+    title: '',
     description: '',
-    type: 'discount',
+    promotionCode: '',
+    autoGenerateCode: true,
     discountType: 'percentage',
     discountValue: '',
     branchId: '',
     targetSegment: 'all',
-    applicableServices: [],
+    applicableTo: 'all', // 'all', 'services', 'products', 'specific'
+    specificServices: [],
+    specificProducts: [],
+    usageType: 'repeating', // 'one-time' or 'repeating'
+    maxUses: '',
     startDate: '',
-    endDate: ''
+    endDate: '',
+    isActive: true
   });
 
   useEffect(() => {
@@ -47,7 +53,7 @@ const Promotions = () => {
       setLoading(true);
       const [promosData, branchesData] = await Promise.all([
         getAllPromotions(),
-        getBranches()
+        getAllBranches()
       ]);
       setPromotions(promosData);
       setBranches(branchesData);
@@ -78,17 +84,39 @@ const Promotions = () => {
 
   const handleEdit = (promotion) => {
     setSelectedPromotion(promotion);
+    
+    // Handle date conversion - support both Date objects and Timestamps
+    const formatDate = (date) => {
+      if (!date) return '';
+      if (date instanceof Date) {
+        return date.toISOString().split('T')[0];
+      }
+      if (date?.toDate) {
+        return date.toDate().toISOString().split('T')[0];
+      }
+      if (typeof date === 'string') {
+        return date.split('T')[0];
+      }
+      return '';
+    };
+    
     setFormData({
-      name: promotion.name,
+      title: promotion.title || promotion.name || '',
       description: promotion.description || '',
-      type: promotion.type || 'discount',
+      promotionCode: promotion.promotionCode || '',
+      autoGenerateCode: false,
       discountType: promotion.discountType || 'percentage',
       discountValue: promotion.discountValue || '',
-      branchId: promotion.branchId || '',
+      branchId: promotion.branchId || '', // null becomes empty string for form
       targetSegment: promotion.targetSegment || 'all',
-      applicableServices: promotion.applicableServices || [],
-      startDate: promotion.startDate ? promotion.startDate.toISOString().split('T')[0] : '',
-      endDate: promotion.endDate ? promotion.endDate.toISOString().split('T')[0] : ''
+      applicableTo: promotion.applicableTo || 'all',
+      specificServices: promotion.specificServices || [],
+      specificProducts: promotion.specificProducts || [],
+      usageType: promotion.usageType || 'repeating',
+      maxUses: promotion.maxUses || '',
+      startDate: formatDate(promotion.startDate),
+      endDate: formatDate(promotion.endDate),
+      isActive: promotion.isActive !== undefined ? promotion.isActive : true
     });
     setShowModal(true);
   };
@@ -101,22 +129,47 @@ const Promotions = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!formData.name || !formData.startDate || !formData.endDate) {
+    if (!formData.title || !formData.startDate || !formData.endDate) {
       toast.error('Please fill in all required fields');
       return;
     }
 
+    if (!formData.promotionCode || formData.promotionCode.trim() === '') {
+      toast.error('Promotion code is required');
+      return;
+    }
+
+    // Validate maxUses for repeating promotions
+    if (formData.usageType === 'repeating' && formData.maxUses) {
+      const maxUses = parseInt(formData.maxUses);
+      if (isNaN(maxUses) || maxUses <= 0) {
+        toast.error('Max uses must be a positive number');
+        return;
+      }
+    }
+
     try {
+      // Convert empty string to null for system-wide promotions
+      const promotionData = {
+        ...formData,
+        branchId: formData.branchId === '' ? null : formData.branchId,
+        promotionCode: formData.promotionCode.trim().toUpperCase(),
+        maxUses: formData.usageType === 'repeating' && formData.maxUses ? parseInt(formData.maxUses) : null
+      };
+      
       if (selectedPromotion) {
-        await updatePromotion(selectedPromotion.id, formData, currentUser);
+        await updatePromotion(selectedPromotion.id, promotionData, currentUser);
+        toast.success('Promotion updated successfully');
       } else {
-        await createPromotion(formData, currentUser);
+        await createPromotion(promotionData, currentUser);
+        toast.success('Promotion created successfully');
       }
       
       setShowModal(false);
       await fetchData();
     } catch (error) {
       console.error('Error saving promotion:', error);
+      toast.error(error.message || 'Failed to save promotion');
     }
   };
 
@@ -134,9 +187,24 @@ const Promotions = () => {
   const isActive = (promotion) => {
     if (!promotion.isActive) return false;
     const now = new Date();
-    const start = promotion.startDate?.toDate() || new Date();
-    const end = promotion.endDate?.toDate() || new Date();
+    
+    // Handle date conversion - support both Date objects and Timestamps
+    const getDate = (date) => {
+      if (date instanceof Date) return date;
+      if (date?.toDate) return date.toDate();
+      if (typeof date === 'string') return new Date(date);
+      return new Date();
+    };
+    
+    const start = getDate(promotion.startDate);
+    const end = getDate(promotion.endDate);
     return now >= start && now <= end;
+  };
+  
+  const getBranchName = (branchId) => {
+    if (!branchId) return 'System-Wide (All Branches)';
+    const branch = branches.find(b => b.id === branchId);
+    return branch?.name || branch?.branchName || 'Unknown Branch';
   };
 
   if (loading) {
@@ -175,8 +243,13 @@ const Promotions = () => {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
                       <Tag className="h-5 w-5 text-[#2D1B4E]" />
-                      <h3 className="text-lg font-semibold text-gray-900">{promotion.name}</h3>
+                      <h3 className="text-lg font-semibold text-gray-900">{promotion.title || promotion.name}</h3>
                     </div>
+                    {promotion.promotionCode && (
+                      <div className="text-xs text-gray-500 mb-2">
+                        Code: <span className="font-mono font-semibold">{promotion.promotionCode}</span>
+                      </div>
+                    )}
                     {promotion.description && (
                       <p className="text-sm text-gray-600 mb-3">{promotion.description}</p>
                     )}
@@ -194,20 +267,40 @@ const Promotions = () => {
                   <div className="flex items-center gap-2 text-sm">
                     <Calendar className="h-4 w-4 text-gray-400" />
                     <span className="text-gray-600">
-                      {promotion.startDate?.toLocaleDateString()} - {promotion.endDate?.toLocaleDateString()}
+                      {(() => {
+                        const formatDate = (date) => {
+                          if (!date) return 'N/A';
+                          if (date instanceof Date) return date.toLocaleDateString();
+                          if (date?.toDate) return date.toDate().toLocaleDateString();
+                          if (typeof date === 'string') return new Date(date).toLocaleDateString();
+                          return 'N/A';
+                        };
+                        return `${formatDate(promotion.startDate)} - ${formatDate(promotion.endDate)}`;
+                      })()}
                     </span>
                   </div>
                   <div className="text-sm text-gray-600">
                     Discount: {promotion.discountType === 'percentage' ? `${promotion.discountValue}%` : `₱${promotion.discountValue}`}
                   </div>
                   <div className="text-sm text-gray-600">
+                    Applicable: {promotion.applicableTo === 'all' ? 'All Services & Products' : 
+                                 promotion.applicableTo === 'services' ? 'All Services' :
+                                 promotion.applicableTo === 'products' ? 'All Products' : 'Specific Items'}
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    Usage: {promotion.usageType === 'one-time' ? 'One-Time' : 
+                           promotion.maxUses ? `Up to ${promotion.maxUses} uses` : 'Unlimited'}
+                  </div>
+                  <div className="text-sm text-gray-600">
                     Target: {promotion.targetSegment || 'All'} clients
                   </div>
-                  {promotion.branchId && (
-                    <div className="text-sm text-gray-600">
-                      Branch: {branches.find(b => b.id === promotion.branchId)?.name || 'N/A'}
-                    </div>
-                  )}
+                  <div className={`text-sm font-medium ${
+                    !promotion.branchId 
+                      ? 'text-blue-600' 
+                      : 'text-gray-600'
+                  }`}>
+                    {!promotion.branchId ? '🌐 System-Wide' : `📍 Branch: ${getBranchName(promotion.branchId)}`}
+                  </div>
                 </div>
 
                 <div className="flex gap-2 pt-4 border-t">
@@ -248,13 +341,36 @@ const Promotions = () => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Promotion Name <span className="text-red-500">*</span>
+              Promotion Title <span className="text-red-500">*</span>
             </label>
             <Input
-              value={formData.name}
-              onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              value={formData.title}
+              onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
               required
+              placeholder="Enter promotion title"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Promotion Code <span className="text-red-500">*</span>
+            </label>
+            <div className="flex gap-2">
+              <Input
+                value={formData.promotionCode}
+                onChange={(e) => setFormData(prev => ({ ...prev, promotionCode: e.target.value.toUpperCase() }))}
+                required
+                placeholder="Enter or generate code"
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setFormData(prev => ({ ...prev, promotionCode: generatePromotionCode() }))}
+              >
+                Generate
+              </Button>
+            </div>
           </div>
 
           <div>
@@ -351,10 +467,10 @@ const Promotions = () => {
               onChange={(e) => setFormData(prev => ({ ...prev, branchId: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#2D1B4E] focus:border-transparent"
             >
-              <option value="">All Branches</option>
+              <option value="">🌐 System-Wide (All Branches)</option>
               {branches.map(branch => (
                 <option key={branch.id} value={branch.id}>
-                  {branch.name || branch.branchName}
+                  📍 {branch.branchName || branch.name || branch.id}
                 </option>
               ))}
             </select>
@@ -387,7 +503,7 @@ const Promotions = () => {
         }}
         onConfirm={handleConfirmDelete}
         title="Delete Promotion"
-        message={`Are you sure you want to delete "${selectedPromotion?.name}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete "${selectedPromotion?.title || selectedPromotion?.name}"? This action cannot be undone.`}
         confirmText="Delete"
         confirmVariant="danger"
       />
@@ -396,4 +512,6 @@ const Promotions = () => {
 };
 
 export default Promotions;
+
+
 

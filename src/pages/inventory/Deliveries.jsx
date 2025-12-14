@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import InventoryLayout from '../../layouts/InventoryLayout';
 import { Card } from '../../components/ui/Card';
@@ -37,7 +37,9 @@ import { format } from 'date-fns';
 import { collection, query, where, getDocs, doc, updateDoc, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import inventoryService from '../../services/inventoryService';
+import { productService } from '../../services/productService';
 import toast from 'react-hot-toast';
+import { useReactToPrint } from 'react-to-print';
 
 const Deliveries = () => {
   const { userData } = useAuth();
@@ -61,11 +63,26 @@ const Deliveries = () => {
   const [checkedItems, setCheckedItems] = useState({}); // { productId: boolean }
   const [isProcessing, setIsProcessing] = useState(false);
   const [receivingNotes, setReceivingNotes] = useState('');
+  const [isConfirmReceiptModalOpen, setIsConfirmReceiptModalOpen] = useState(false);
   
   // Batch expiration modal states
   const [isBatchExpirationModalOpen, setIsBatchExpirationModalOpen] = useState(false);
   const [batchExpirationDates, setBatchExpirationDates] = useState({}); // { productId: expirationDate }
   const [receivedDeliveryData, setReceivedDeliveryData] = useState(null); // Store delivery data after receiving
+  
+  // Receipt modal states
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
+  const [receiptData, setReceiptData] = useState(null);
+  const receiptRef = useRef();
+  
+  // Print handler
+  const handlePrint = useReactToPrint({
+    content: () => receiptRef.current,
+    documentTitle: receiptData ? `Delivery_Receipt_${receiptData.receiptNumber}` : 'Delivery_Receipt',
+    onBeforeGetContent: () => {
+      return Promise.resolve();
+    }
+  });
 
   // Load deliveries (purchase orders with In Transit status)
   useEffect(() => {
@@ -213,25 +230,34 @@ const Deliveries = () => {
     return receivedQty - orderedQty;
   };
 
-  // Check if all items are checked
-  const allItemsChecked = useMemo(() => {
+  // Check if at least one item is checked
+  const atLeastOneItemChecked = useMemo(() => {
     if (!selectedOrder || !selectedOrder.items) return false;
-    return selectedOrder.items.every((item, index) => {
+    return selectedOrder.items.some((item, index) => {
       const uniqueKey = getItemKey(item, index);
       return checkedItems[uniqueKey] === true;
     });
   }, [selectedOrder, checkedItems]);
 
-  // Handle receive delivery
+  // Count checked items
+  const checkedItemsCount = useMemo(() => {
+    if (!selectedOrder || !selectedOrder.items) return 0;
+    return selectedOrder.items.filter((item, index) => {
+      const uniqueKey = getItemKey(item, index);
+      return checkedItems[uniqueKey] === true;
+    }).length;
+  }, [selectedOrder, checkedItems]);
+
+  // Handle receive delivery (called after confirmation)
   const handleReceiveDelivery = async () => {
     if (!selectedOrder || !selectedOrder.items || selectedOrder.items.length === 0) {
       setError('Invalid order data');
       return;
     }
 
-    // Validate that all items are checked
-    if (!allItemsChecked) {
-      setError('Please check all items before receiving the delivery');
+    // Validate that at least one item is checked
+    if (!atLeastOneItemChecked) {
+      setError('Please check at least one item before receiving the delivery');
       return;
     }
 
@@ -239,31 +265,34 @@ const Deliveries = () => {
       setIsProcessing(true);
       setError(null);
 
-      // Prepare receiving data
+      // Prepare receiving data - only include checked items
       const receivingData = {
         purchaseOrderId: selectedOrder.orderId || selectedOrder.id,
         purchaseOrderDocId: selectedOrder.id,
         branchId: userData.branchId,
         supplierId: selectedOrder.supplierId,
         supplierName: selectedOrder.supplierName,
-        items: selectedOrder.items.map((item, index) => {
-          const uniqueKey = getItemKey(item, index);
-          const orderedQty = item.quantity || 0;
-          const receivedQty = receivedQuantities[uniqueKey] || 0;
-          const discrepancy = receivedQty - orderedQty;
-          
-          return {
-            productId: item.productId,
-            productName: item.productName,
-            sku: item.sku || null,
-            usageType: item.usageType || 'otc',
-            orderedQuantity: orderedQty,
-            receivedQuantity: receivedQty,
-            discrepancy: discrepancy,
-            unitPrice: item.unitPrice || 0,
-            checked: checkedItems[uniqueKey] || false
-          };
-        }),
+        items: selectedOrder.items
+          .map((item, index) => {
+            const uniqueKey = getItemKey(item, index);
+            const orderedQty = item.quantity || 0;
+            const receivedQty = receivedQuantities[uniqueKey] || 0;
+            const discrepancy = receivedQty - orderedQty;
+            const isChecked = checkedItems[uniqueKey] === true;
+            
+            return {
+              productId: item.productId,
+              productName: item.productName,
+              sku: item.sku || null,
+              usageType: item.usageType || 'otc',
+              orderedQuantity: orderedQty,
+              receivedQuantity: receivedQty,
+              discrepancy: discrepancy,
+              unitPrice: item.unitPrice || 0,
+              checked: isChecked
+            };
+          })
+          .filter(item => item.checked === true), // Only include checked items
         notes: receivingNotes.trim(),
         receivedBy: userData.uid || userData.id,
         receivedByName: (userData.firstName && userData.lastName 
@@ -289,22 +318,68 @@ const Deliveries = () => {
       });
 
       // Store delivery data for batch creation
-      // Use unique keys to get received quantities
-      const deliveryItems = selectedOrder.items.map((item, index) => {
+      // Use unique keys to get received quantities and fetch shelf life
+      // Only include checked items
+      const deliveryItems = [];
+      const productShelfLives = {}; // Store shelf life for each product
+      
+      // Get checked items first
+      const checkedItemsList = selectedOrder.items.filter((item, index) => {
+        const uniqueKey = getItemKey(item, index);
+        return checkedItems[uniqueKey] === true;
+      });
+      
+      // Fetch shelf life for all checked products in parallel
+      const shelfLifePromises = checkedItemsList.map(async (item, index) => {
+        // Find original index in selectedOrder.items
+        const originalIndex = selectedOrder.items.findIndex((origItem, origIdx) => {
+          const origKey = getItemKey(origItem, origIdx);
+          const checkKey = getItemKey(item, index);
+          return origKey === checkKey;
+        });
+        const uniqueKey = getItemKey(item, originalIndex >= 0 ? originalIndex : index);
+        const receivedQty = receivedQuantities[uniqueKey] || 0;
+        
+        if (receivedQty > 0) {
+          try {
+            const productResult = await productService.getProductById(item.productId);
+            if (productResult.success && productResult.product?.shelfLife) {
+              return { uniqueKey, shelfLife: productResult.product.shelfLife };
+            }
+          } catch (err) {
+            console.error(`Error fetching shelf life for product ${item.productId}:`, err);
+          }
+        }
+        return null;
+      });
+      
+      const shelfLifeResults = await Promise.all(shelfLifePromises);
+      shelfLifeResults.forEach(result => {
+        if (result) {
+          productShelfLives[result.uniqueKey] = result.shelfLife;
+        }
+      });
+      
+      // Build delivery items - only checked items
+      selectedOrder.items.forEach((item, index) => {
         const uniqueKey = getItemKey(item, index);
         const orderedQty = item.quantity || 0;
         const receivedQty = receivedQuantities[uniqueKey] || 0;
-        return {
-          productId: item.productId,
-          productName: item.productName,
-          sku: item.sku || null,
-          usageType: item.usageType || 'otc',
-          quantity: receivedQty,
-          unitPrice: item.unitPrice || 0
-        };
-      }).filter(item => item.quantity > 0); // Only include items with received quantity > 0
+        const isChecked = checkedItems[uniqueKey] === true;
+        
+        if (receivedQty > 0 && isChecked) {
+          deliveryItems.push({
+            productId: item.productId,
+            productName: item.productName,
+            sku: item.sku || null,
+            usageType: item.usageType || 'otc',
+            quantity: receivedQty,
+            unitPrice: item.unitPrice || 0
+          });
+        }
+      });
 
-      setReceivedDeliveryData({
+      const deliveryData = {
         purchaseOrderId: selectedOrder.orderId || selectedOrder.id,
         purchaseOrderDocId: selectedOrder.id,
         branchId: userData.branchId,
@@ -315,7 +390,36 @@ const Deliveries = () => {
           ? `${userData.firstName} ${userData.lastName}`.trim() 
           : (userData.email || 'Unknown')),
         items: deliveryItems,
-        receivedAt: new Date()
+        receivedAt: new Date(),
+        productShelfLives: productShelfLives // Store shelf life info
+      };
+
+      setReceivedDeliveryData(deliveryData);
+
+      // Calculate totals for receipt
+      const orderedTotal = receivingData.items.reduce((sum, item) => 
+        sum + (item.orderedQuantity * item.unitPrice), 0
+      );
+      const receivedTotal = receivingData.items.reduce((sum, item) => 
+        sum + (item.receivedQuantity * item.unitPrice), 0
+      );
+      const discrepancyAmount = receivedTotal - orderedTotal;
+      
+      setReceiptData({
+        receiptNumber: `DR-${selectedOrder.orderId || selectedOrder.id}-${Date.now()}`,
+        purchaseOrderId: selectedOrder.orderId || selectedOrder.id,
+        supplierName: selectedOrder.supplierName,
+        supplierId: selectedOrder.supplierId,
+        orderDate: selectedOrder.orderDate ? format(new Date(selectedOrder.orderDate), 'MMM dd, yyyy') : 'N/A',
+        receivedDate: format(new Date(), 'MMM dd, yyyy HH:mm'),
+        receivedBy: deliveryData.receivedByName,
+        items: receivingData.items,
+        orderedTotal: orderedTotal,
+        receivedTotal: receivedTotal,
+        discrepancyAmount: discrepancyAmount,
+        totalAmount: receivedTotal, // Amount to pay is based on what was actually received
+        notes: receivingNotes.trim(),
+        branchId: userData.branchId
       });
 
       // Reload deliveries
@@ -330,20 +434,83 @@ const Deliveries = () => {
       setError(null);
       
       // Open batch expiration modal
-      // Use unique keys to initialize expiration dates
+      // Fetch product shelf life and calculate default expiration dates
       const initialExpirationDates = {};
-      selectedOrder.items.forEach((item, index) => {
+      const receivedDate = new Date();
+      
+      // Fetch product data for each CHECKED item to get shelf life and calculate expiration dates
+      const expirationPromises = selectedOrder.items.map(async (item, index) => {
         const uniqueKey = getItemKey(item, index);
         const receivedQty = receivedQuantities[uniqueKey] || 0;
-        if (receivedQty > 0) {
-          // Set default expiration to 1 year from today
-          const defaultExpiration = new Date();
-          defaultExpiration.setFullYear(defaultExpiration.getFullYear() + 1);
-          // Use unique key for expiration dates too
-          initialExpirationDates[uniqueKey] = defaultExpiration.toISOString().split('T')[0];
+        const isChecked = checkedItems[uniqueKey] === true;
+        
+        if (receivedQty > 0 && isChecked) {
+          try {
+            // Fetch product to get shelf life
+            const productResult = await productService.getProductById(item.productId);
+            let defaultExpiration = new Date();
+            
+            if (productResult.success && productResult.product?.shelfLife) {
+              // Parse shelf life (e.g., "24 months" -> 24, or just "24" -> 24)
+              const shelfLifeStr = productResult.product.shelfLife.toString().toLowerCase().trim();
+              
+              // Try to match "24 months" or "24" format
+              let months = null;
+              const monthsMatch = shelfLifeStr.match(/(\d+)\s*(?:month|months|mo)/);
+              if (monthsMatch) {
+                months = parseInt(monthsMatch[1], 10);
+              } else {
+                // Try to parse as just a number (assume it's months)
+                const numberMatch = shelfLifeStr.match(/^(\d+)$/);
+                if (numberMatch) {
+                  months = parseInt(numberMatch[1], 10);
+                }
+              }
+              
+              if (months && months > 0) {
+                // Add months to received date - handle year rollover correctly
+                defaultExpiration = new Date(receivedDate);
+                const currentYear = defaultExpiration.getFullYear();
+                const currentMonth = defaultExpiration.getMonth();
+                const currentDate = defaultExpiration.getDate();
+                
+                // Calculate new month and year
+                const newMonth = currentMonth + months;
+                const newYear = currentYear + Math.floor(newMonth / 12);
+                const finalMonth = newMonth % 12;
+                
+                // Create new date with correct year and month
+                defaultExpiration = new Date(newYear, finalMonth, currentDate);
+              } else {
+                // If no valid format found, default to 1 year
+                defaultExpiration.setFullYear(defaultExpiration.getFullYear() + 1);
+              }
+            } else {
+              // If no shelf life found, default to 1 year
+              defaultExpiration.setFullYear(defaultExpiration.getFullYear() + 1);
+            }
+            
+            return { uniqueKey, expirationDate: defaultExpiration.toISOString().split('T')[0] };
+          } catch (err) {
+            console.error(`Error fetching product ${item.productId} for shelf life:`, err);
+            // Default to 1 year if error
+            const defaultExpiration = new Date();
+            defaultExpiration.setFullYear(defaultExpiration.getFullYear() + 1);
+            return { uniqueKey, expirationDate: defaultExpiration.toISOString().split('T')[0] };
+          }
+        }
+        return null;
+      });
+      
+      const expirationResults = await Promise.all(expirationPromises);
+      expirationResults.forEach(result => {
+        if (result) {
+          initialExpirationDates[result.uniqueKey] = result.expirationDate;
         }
       });
+      
       setBatchExpirationDates(initialExpirationDates);
+      setError(null); // Clear any previous errors
       setIsBatchExpirationModalOpen(true);
     } catch (err) {
       console.error('Error receiving delivery:', err);
@@ -724,7 +891,7 @@ const Deliveries = () => {
                   <tr>
                     <td colSpan="8" className="px-6 py-8 text-center text-gray-500">
                       {deliveries.length === 0 
-                        ? 'No deliveries in transit. Purchase orders will appear here after being approved by the Operational Manager.'
+                        ? 'No deliveries in transit. Purchase orders will appear here after being approved by the Overall Inventory Controller.'
                         : 'No deliveries match your search criteria.'}
                     </td>
                   </tr>
@@ -1117,30 +1284,94 @@ const Deliveries = () => {
                 </div>
 
                 {/* Summary */}
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Items Checked</p>
-                      <p className="text-lg font-bold text-gray-900">
-                        {selectedOrder.items ? selectedOrder.items.filter((item, index) => {
-                          const uniqueKey = getItemKey(item, index);
-                          return checkedItems[uniqueKey] === true;
-                        }).length : 0} / {selectedOrder.items?.length || 0}
-                      </p>
+                <div className="space-y-4">
+                  {/* Items Checked Status */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-600">Items Checked</p>
+                        <p className="text-lg font-bold text-gray-900">
+                          {selectedOrder.items ? selectedOrder.items.filter((item, index) => {
+                            const uniqueKey = getItemKey(item, index);
+                            return checkedItems[uniqueKey] === true;
+                          }).length : 0} / {selectedOrder.items?.length || 0}
+                        </p>
+                      </div>
+                      {!atLeastOneItemChecked && (
+                        <div className="flex items-center gap-2 text-amber-600">
+                          <AlertTriangle className="h-5 w-5" />
+                          <span className="text-sm font-medium">Please check at least one item</span>
+                        </div>
+                      )}
+                      {atLeastOneItemChecked && (
+                        <div className="flex items-center gap-2 text-green-600">
+                          <CheckCircle className="h-5 w-5" />
+                          <span className="text-sm font-medium">
+                            {checkedItemsCount === selectedOrder.items?.length 
+                              ? 'All items checked' 
+                              : `${checkedItemsCount} item${checkedItemsCount > 1 ? 's' : ''} checked`}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                    {!allItemsChecked && (
-                      <div className="flex items-center gap-2 text-amber-600">
-                        <AlertTriangle className="h-5 w-5" />
-                        <span className="text-sm font-medium">Please check all items</span>
-                      </div>
-                    )}
-                    {allItemsChecked && (
-                      <div className="flex items-center gap-2 text-green-600">
-                        <CheckCircle className="h-5 w-5" />
-                        <span className="text-sm font-medium">All items checked</span>
-                      </div>
-                    )}
                   </div>
+
+                  {/* Amount Summary */}
+                  {(() => {
+                    // Calculate totals only for checked items
+                    const orderedTotal = selectedOrder.items?.reduce((sum, item, index) => {
+                      const uniqueKey = getItemKey(item, index);
+                      const isChecked = checkedItems[uniqueKey] === true;
+                      if (!isChecked) return sum; // Skip unchecked items
+                      const orderedQty = item.quantity || 0;
+                      const unitPrice = item.unitPrice || 0;
+                      return sum + (orderedQty * unitPrice);
+                    }, 0) || 0;
+
+                    const receivedTotal = selectedOrder.items?.reduce((sum, item, index) => {
+                      const uniqueKey = getItemKey(item, index);
+                      const isChecked = checkedItems[uniqueKey] === true;
+                      if (!isChecked) return sum; // Skip unchecked items
+                      const receivedQty = receivedQuantities[uniqueKey] || 0;
+                      const unitPrice = item.unitPrice || 0;
+                      return sum + (receivedQty * unitPrice);
+                    }, 0) || 0;
+
+                    const discrepancyAmount = receivedTotal - orderedTotal;
+
+                    return (
+                      <div className="bg-gradient-to-r from-green-50 to-blue-50 border-2 border-green-200 rounded-lg p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Amount Summary</h3>
+                        <div className="space-y-3">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-medium text-gray-700">
+                              Original Order Total {checkedItemsCount < (selectedOrder.items?.length || 0) ? '(Checked Items Only)' : ''}:
+                            </span>
+                            <span className="text-base font-semibold text-gray-900">₱{orderedTotal.toLocaleString()}</span>
+                          </div>
+                          {discrepancyAmount !== 0 && (
+                            <div className={`flex justify-between items-center ${
+                              discrepancyAmount > 0 ? 'text-green-700' : 'text-red-700'
+                            }`}>
+                              <span className="text-sm font-medium">
+                                {discrepancyAmount > 0 ? 'Over-delivery Adjustment:' : 'Short-delivery Adjustment:'}
+                              </span>
+                              <span className="text-base font-semibold">
+                                {discrepancyAmount > 0 ? '+' : ''}₱{Math.abs(discrepancyAmount).toLocaleString()}
+                              </span>
+                            </div>
+                          )}
+                          <div className="border-t-2 border-green-400 pt-3 mt-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-lg font-bold text-gray-900">Amount to Pay:</span>
+                              <span className="text-2xl font-bold text-green-700">₱{receivedTotal.toLocaleString()}</span>
+                            </div>
+                            <p className="text-xs text-gray-600 mt-1">Based on received quantities</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
@@ -1173,21 +1404,18 @@ const Deliveries = () => {
                     Cancel
                   </Button>
                   <Button
-                    onClick={handleReceiveDelivery}
-                    disabled={isProcessing || !allItemsChecked}
+                    onClick={() => {
+                      if (!atLeastOneItemChecked) {
+                        setError('Please check at least one item before confirming receipt');
+                        return;
+                      }
+                      setIsConfirmReceiptModalOpen(true);
+                    }}
+                    disabled={isProcessing || !atLeastOneItemChecked}
                     className="bg-green-600 text-white hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isProcessing ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle className="h-4 w-4" />
-                        Confirm Receipt
-                      </>
-                    )}
+                    <CheckCircle className="h-4 w-4" />
+                    Confirm Receipt
                   </Button>
                 </div>
               </div>
@@ -1202,43 +1430,43 @@ const Deliveries = () => {
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col transform transition-all duration-300 scale-100">
             {/* Modal Header */}
             <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="p-2 bg-white/20 rounded-lg">
-                    <Calendar className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <h2 className="text-2xl font-bold">Batch Expiration Dates</h2>
-                    <p className="text-white/80 text-sm mt-1">Enter expiration dates for each product batch</p>
-                  </div>
+              <div className="flex items-center gap-4">
+                <div className="p-2 bg-white/20 rounded-lg">
+                  <Calendar className="h-6 w-6" />
                 </div>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setIsBatchExpirationModalOpen(false);
-                    setBatchExpirationDates({});
-                    setReceivedDeliveryData(null);
-                  }}
-                  className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
-                >
-                  <X className="h-5 w-5" />
-                </Button>
+                <div>
+                  <h2 className="text-2xl font-bold">Batch Expiration Dates</h2>
+                  <p className="text-white/80 text-sm mt-1">Required: Enter expiration dates for each product batch</p>
+                </div>
               </div>
             </div>
 
             {/* Modal Content */}
             <div className="flex-1 overflow-y-auto p-6">
               <div className="space-y-6">
+                {/* Error Display */}
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-red-900">Error</p>
+                        <p className="text-sm text-red-700 mt-1">{error}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Info Box */}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="font-semibold mb-1 text-blue-900">Batch Expiration Tracking</p>
+                      <p className="font-semibold mb-1 text-blue-900">Batch Expiration Tracking - Required</p>
                       <p className="text-sm text-blue-700">
-                        Each product will be tracked in batches with the expiration date you specify. 
-                        The system will use FIFO (First In, First Out) to manage stock rotation, using the oldest batches first.
-                        Leave expiration date empty if the product doesn't expire.
+                        Each product must have an expiration date specified. The system will use FIFO (First In, First Out) 
+                        to manage stock rotation, using the oldest batches first. Expiration dates are required for proper 
+                        inventory tracking and batch management.
                       </p>
                     </div>
                   </div>
@@ -1254,6 +1482,7 @@ const Deliveries = () => {
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
                           <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Usage Type</th>
                           <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Quantity</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Shelf Life</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expiration Date</th>
                         </tr>
                       </thead>
@@ -1261,7 +1490,8 @@ const Deliveries = () => {
                         {receivedDeliveryData.items && receivedDeliveryData.items.length > 0 ? (
                           receivedDeliveryData.items.map((item, index) => {
                             // Create unique key for this item (same format as in receiving modal)
-                            const uniqueKey = `${item.productId}_${item.usageType || 'otc'}_${index}`;
+                            const uniqueKey = getItemKey(item, index);
+                            const shelfLife = receivedDeliveryData.productShelfLives?.[uniqueKey] || null;
                             return (
                               <tr key={uniqueKey} className="hover:bg-gray-50">
                                 <td className="px-4 py-3">
@@ -1279,6 +1509,13 @@ const Deliveries = () => {
                                 <td className="px-4 py-3 text-center">
                                   <div className="text-gray-900 font-medium">{item.quantity}</div>
                                 </td>
+                                <td className="px-4 py-3 text-center">
+                                  {shelfLife ? (
+                                    <span className="text-sm text-gray-700 font-medium">{shelfLife}</span>
+                                  ) : (
+                                    <span className="text-xs text-gray-400 italic">Not set</span>
+                                  )}
+                                </td>
                                 <td className="px-4 py-3">
                                   <Input
                                     type="date"
@@ -1289,12 +1526,23 @@ const Deliveries = () => {
                                         [uniqueKey]: e.target.value
                                       }));
                                     }}
-                                    className="w-full"
+                                    className={`w-full ${!batchExpirationDates[uniqueKey] ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : ''}`}
                                     min={new Date().toISOString().split('T')[0]}
+                                    required
                                   />
+                                  {!batchExpirationDates[uniqueKey] && (
+                                    <p className="text-xs text-red-600 mt-1 font-medium">
+                                      ⚠ Required field
+                                    </p>
+                                  )}
                                   {batchExpirationDates[uniqueKey] && (
                                     <p className="text-xs text-gray-500 mt-1">
                                       {format(new Date(batchExpirationDates[uniqueKey]), 'MMM dd, yyyy')}
+                                    </p>
+                                  )}
+                                  {shelfLife && batchExpirationDates[uniqueKey] && (
+                                    <p className="text-xs text-green-600 mt-1">
+                                      ✓ Based on {shelfLife} shelf life
                                     </p>
                                   )}
                                 </td>
@@ -1303,7 +1551,7 @@ const Deliveries = () => {
                           })
                         ) : (
                           <tr>
-                            <td colSpan="4" className="px-4 py-4 text-center text-gray-500">No items</td>
+                            <td colSpan="5" className="px-4 py-4 text-center text-gray-500">No items</td>
                           </tr>
                         )}
                       </tbody>
@@ -1317,22 +1565,20 @@ const Deliveries = () => {
             <div className="border-t border-gray-200 p-6 bg-gray-50">
               <div className="flex justify-end gap-3">
                 <Button
-                  variant="outline"
-                  onClick={async () => {
-                    // Skip batch creation - just close modal
-                    setIsBatchExpirationModalOpen(false);
-                    setBatchExpirationDates({});
-                    setReceivedDeliveryData(null);
-                    toast.success('Delivery received. Batch creation skipped.');
-                  }}
-                  disabled={isProcessing}
-                  className="border-gray-300 text-gray-700 hover:bg-gray-100"
-                >
-                  Skip
-                </Button>
-                <Button
                   onClick={async () => {
                     if (!receivedDeliveryData) return;
+                    
+                    // Validate that all items have expiration dates
+                    const missingExpiration = receivedDeliveryData.items.find((item, index) => {
+                      const uniqueKey = getItemKey(item, index);
+                      return !batchExpirationDates[uniqueKey] || batchExpirationDates[uniqueKey].trim() === '';
+                    });
+                    
+                    if (missingExpiration) {
+                      setError('Please enter expiration dates for all products before proceeding.');
+                      toast.error('All products must have expiration dates');
+                      return;
+                    }
                     
                     try {
                       setIsProcessing(true);
@@ -1341,7 +1587,7 @@ const Deliveries = () => {
                       // Prepare items with expiration dates
                       // Use unique keys to get expiration dates
                       const itemsWithExpiration = receivedDeliveryData.items.map((item, index) => {
-                        const uniqueKey = `${item.productId}_${item.usageType || 'otc'}_${index}`;
+                        const uniqueKey = getItemKey(item, index);
                         return {
                           ...item,
                           expirationDate: batchExpirationDates[uniqueKey] || null
@@ -1362,10 +1608,11 @@ const Deliveries = () => {
 
                       toast.success(`Successfully created ${batchesResult.batchesCreated || itemsWithExpiration.length} batch(es)!`);
                       
-                      // Close modal and reset
+                      // Close modal and show receipt
                       setIsBatchExpirationModalOpen(false);
                       setBatchExpirationDates({});
                       setReceivedDeliveryData(null);
+                      setIsReceiptModalOpen(true);
                     } catch (err) {
                       console.error('Error creating batches:', err);
                       setError(err.message || 'Failed to create batches. Please try again.');
@@ -1388,6 +1635,350 @@ const Deliveries = () => {
                       Create Batches
                     </>
                   )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirm Receipt Modal */}
+      {isConfirmReceiptModalOpen && selectedOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-100">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-white/20 rounded-lg">
+                    <AlertTriangle className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold">Confirm Delivery Receipt</h2>
+                    <p className="text-white/80 text-sm mt-1">Please review before confirming</p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => setIsConfirmReceiptModalOpen(false)}
+                  className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6">
+              <div className="space-y-4">
+                {/* Warning if not all items checked */}
+                {checkedItemsCount < (selectedOrder.items?.length || 0) && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-semibold text-amber-900">Partial Delivery</p>
+                        <p className="text-sm text-amber-700 mt-1">
+                          Only {checkedItemsCount} out of {selectedOrder.items?.length || 0} items are checked. 
+                          This means only the checked items were received. Unchecked items will not be processed.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Receipt Summary */}
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <h3 className="font-semibold text-gray-900 mb-3">Receipt Summary</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Purchase Order:</span>
+                      <span className="font-medium text-gray-900">{selectedOrder.orderId || selectedOrder.id}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Supplier:</span>
+                      <span className="font-medium text-gray-900">{selectedOrder.supplierName || 'Unknown'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Items Checked:</span>
+                      <span className="font-medium text-gray-900">
+                        {checkedItemsCount} / {selectedOrder.items?.length || 0}
+                      </span>
+                    </div>
+                    {(() => {
+                      // Calculate total only for checked items
+                      const receivedTotal = selectedOrder.items?.reduce((sum, item, index) => {
+                        const uniqueKey = getItemKey(item, index);
+                        const receivedQty = receivedQuantities[uniqueKey] || 0;
+                        const unitPrice = item.unitPrice || 0;
+                        const isChecked = checkedItems[uniqueKey] === true;
+                        // Only count checked items
+                        return isChecked ? sum + (receivedQty * unitPrice) : sum;
+                      }, 0) || 0;
+                      return (
+                        <div className="flex justify-between pt-2 border-t border-gray-300">
+                          <span className="font-semibold text-gray-900">Amount to Pay:</span>
+                          <span className="text-lg font-bold text-green-700">₱{receivedTotal.toLocaleString()}</span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                {/* Notes */}
+                {receivingNotes && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm font-semibold text-blue-900 mb-1">Notes:</p>
+                    <p className="text-sm text-blue-700">{receivingNotes}</p>
+                  </div>
+                )}
+
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <p className="text-sm text-gray-700">
+                    <strong>Are you sure you want to confirm this delivery receipt?</strong> This action will:
+                  </p>
+                  <ul className="list-disc list-inside text-sm text-gray-600 mt-2 space-y-1">
+                    <li>Mark the checked items as received</li>
+                    <li>Update the purchase order status</li>
+                    <li>Create delivery receipt records</li>
+                    <li>Proceed to batch expiration date entry</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-gray-200 p-6 bg-gray-50">
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => setIsConfirmReceiptModalOpen(false)}
+                  disabled={isProcessing}
+                  className="border-gray-300 text-gray-700 hover:bg-gray-100"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={async () => {
+                    setIsConfirmReceiptModalOpen(false);
+                    await handleReceiveDelivery();
+                  }}
+                  disabled={isProcessing}
+                  className="bg-green-600 text-white hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-4 w-4" />
+                      Confirm & Process
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delivery Receipt Modal */}
+      {isReceiptModalOpen && receiptData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col transform transition-all duration-300 scale-100">
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-6 flex-shrink-0">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="p-2 bg-white/20 rounded-lg">
+                    <FileText className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold">Delivery Receipt</h2>
+                    <p className="text-white/80 text-sm mt-1">Receipt #{receiptData.receiptNumber}</p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setIsReceiptModalOpen(false);
+                    setReceiptData(null);
+                  }}
+                  className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {/* Printable Receipt */}
+              <div 
+                ref={receiptRef} 
+                className="bg-white p-8 max-w-3xl mx-auto"
+                style={{
+                  '@media print': {
+                    padding: '20px',
+                    margin: '0',
+                    maxWidth: '100%'
+                  }
+                }}
+              >
+                {/* Receipt Header */}
+                <div className="text-center mb-8 border-b-2 border-gray-300 pb-6">
+                  <h1 className="text-3xl font-bold text-gray-900 mb-2">DELIVERY RECEIPT</h1>
+                  <p className="text-gray-600">Receipt Number: {receiptData.receiptNumber}</p>
+                </div>
+
+                {/* Receipt Details */}
+                <div className="grid grid-cols-2 gap-6 mb-6">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase mb-2">Supplier Information</h3>
+                    <p className="text-lg font-semibold text-gray-900">{receiptData.supplierName}</p>
+                    <p className="text-sm text-gray-600">Supplier ID: {receiptData.supplierId}</p>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase mb-2">Delivery Information</h3>
+                    <p className="text-sm text-gray-900"><strong>Purchase Order:</strong> {receiptData.purchaseOrderId}</p>
+                    <p className="text-sm text-gray-900"><strong>Order Date:</strong> {receiptData.orderDate}</p>
+                    <p className="text-sm text-gray-900"><strong>Received Date:</strong> {receiptData.receivedDate}</p>
+                    <p className="text-sm text-gray-900"><strong>Received By:</strong> {receiptData.receivedBy}</p>
+                  </div>
+                </div>
+
+                {/* Items Table */}
+                <div className="mb-6">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase mb-3">Items Received</h3>
+                  <table className="w-full border-collapse border border-gray-300">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="border border-gray-300 px-4 py-2 text-left text-sm font-semibold text-gray-700">#</th>
+                        <th className="border border-gray-300 px-4 py-2 text-left text-sm font-semibold text-gray-700">Product Name</th>
+                        <th className="border border-gray-300 px-4 py-2 text-left text-sm font-semibold text-gray-700">SKU</th>
+                        <th className="border border-gray-300 px-4 py-2 text-center text-sm font-semibold text-gray-700">Usage Type</th>
+                        <th className="border border-gray-300 px-4 py-2 text-center text-sm font-semibold text-gray-700">Ordered</th>
+                        <th className="border border-gray-300 px-4 py-2 text-center text-sm font-semibold text-gray-700">Received</th>
+                        <th className="border border-gray-300 px-4 py-2 text-center text-sm font-semibold text-gray-700">Discrepancy</th>
+                        <th className="border border-gray-300 px-4 py-2 text-center text-sm font-semibold text-gray-700">Unit Price</th>
+                        <th className="border border-gray-300 px-4 py-2 text-right text-sm font-semibold text-gray-700">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {receiptData.items.map((item, index) => {
+                        const itemTotal = item.receivedQuantity * item.unitPrice;
+                        const discrepancy = item.discrepancy || (item.receivedQuantity - item.orderedQuantity);
+                        return (
+                          <tr key={index} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                            <td className="border border-gray-300 px-4 py-2 text-sm text-gray-900">{index + 1}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-sm text-gray-900">{item.productName}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-sm text-gray-600">{item.sku || 'N/A'}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-center text-sm">
+                              <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
+                                item.usageType === 'salon-use'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : 'bg-green-100 text-green-800'
+                              }`}>
+                                {item.usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
+                              </span>
+                            </td>
+                            <td className="border border-gray-300 px-4 py-2 text-center text-sm text-gray-900">{item.orderedQuantity}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-center text-sm font-semibold text-gray-900">{item.receivedQuantity}</td>
+                            <td className={`border border-gray-300 px-4 py-2 text-center text-sm font-semibold ${
+                              discrepancy > 0 ? 'text-green-600' : discrepancy < 0 ? 'text-red-600' : 'text-gray-900'
+                            }`}>
+                              {discrepancy > 0 ? `+${discrepancy}` : discrepancy}
+                            </td>
+                            <td className="border border-gray-300 px-4 py-2 text-center text-sm text-gray-900">₱{item.unitPrice.toLocaleString()}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right text-sm font-semibold text-gray-900">₱{itemTotal.toLocaleString()}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-gray-100">
+                        <td colSpan="8" className="border border-gray-300 px-4 py-2 text-right text-sm font-semibold text-gray-900">Original Order Total:</td>
+                        <td className="border border-gray-300 px-4 py-2 text-right text-sm text-gray-700">₱{receiptData.orderedTotal.toLocaleString()}</td>
+                      </tr>
+                      {receiptData.discrepancyAmount !== 0 && (
+                        <tr className={receiptData.discrepancyAmount > 0 ? 'bg-yellow-50' : 'bg-red-50'}>
+                          <td colSpan="8" className={`border border-gray-300 px-4 py-2 text-right text-sm font-semibold ${
+                            receiptData.discrepancyAmount > 0 ? 'text-yellow-800' : 'text-red-800'
+                          }`}>
+                            {receiptData.discrepancyAmount > 0 ? 'Over-delivery Adjustment:' : 'Short-delivery Adjustment:'}
+                          </td>
+                          <td className={`border border-gray-300 px-4 py-2 text-right text-sm font-semibold ${
+                            receiptData.discrepancyAmount > 0 ? 'text-yellow-800' : 'text-red-800'
+                          }`}>
+                            {receiptData.discrepancyAmount > 0 ? '+' : ''}₱{Math.abs(receiptData.discrepancyAmount).toLocaleString()}
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="bg-green-100 font-bold border-t-2 border-gray-400">
+                        <td colSpan="8" className="border border-gray-300 px-4 py-3 text-right text-lg font-bold text-gray-900">Amount to Pay:</td>
+                        <td className="border border-gray-300 px-4 py-3 text-right text-xl font-bold text-green-700">₱{receiptData.totalAmount.toLocaleString()}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Notes */}
+                {receiptData.notes && (
+                  <div className="mb-6">
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase mb-2">Notes</h3>
+                    <p className="text-sm text-gray-700 border border-gray-300 rounded p-3 bg-gray-50">{receiptData.notes}</p>
+                  </div>
+                )}
+
+                {/* Receipt Footer */}
+                <div className="border-t-2 border-gray-300 pt-6 mt-6">
+                  <div className="grid grid-cols-2 gap-6">
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Received By:</p>
+                      <div className="border-t border-gray-300 pt-2">
+                        <p className="text-sm font-semibold text-gray-900">{receiptData.receivedBy}</p>
+                        <p className="text-xs text-gray-600">{receiptData.receivedDate}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600 mb-2">Authorized Signature:</p>
+                      <div className="border-t border-gray-300 pt-8">
+                        <p className="text-xs text-gray-500">Signature</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Print Date */}
+                <div className="text-center mt-6 pt-4 border-t border-gray-200">
+                  <p className="text-xs text-gray-500">Generated on {format(new Date(), 'MMM dd, yyyy HH:mm:ss')}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-gray-200 p-6 bg-gray-50 flex-shrink-0">
+              <div className="flex justify-end gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsReceiptModalOpen(false);
+                    setReceiptData(null);
+                  }}
+                  className="border-gray-300 text-gray-700 hover:bg-gray-100"
+                >
+                  Close
+                </Button>
+                <Button
+                  onClick={() => {
+                    handlePrint();
+                  }}
+                  className="bg-green-600 text-white hover:bg-green-700 flex items-center gap-2"
+                >
+                  <Printer className="h-4 w-4" />
+                  Print / Save as PDF
                 </Button>
               </div>
             </div>

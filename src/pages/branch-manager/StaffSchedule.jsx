@@ -147,8 +147,8 @@ const StaffSchedule = () => {
         // Create a map of staff leaves for quick lookup
         const leaveMap = {};
         leaves.forEach(leave => {
-          // Only include approved or pending leaves (cancelled/rejected don't affect schedules)
-          if (leave.status === 'approved' || leave.status === 'pending') {
+          // Only include approved leaves (pending leaves don't affect schedules until approved)
+          if (leave.status === 'approved') {
             const employeeId = leave.employeeId;
             if (!leaveMap[employeeId]) {
               leaveMap[employeeId] = [];
@@ -222,7 +222,8 @@ const StaffSchedule = () => {
         // Create leave map
         const leaveMap = {};
         leaves.forEach(leave => {
-          if (leave.status === 'approved' || leave.status === 'pending') {
+          // Only include approved leaves (pending leaves don't affect schedules until approved)
+          if (leave.status === 'approved') {
             const employeeId = leave.employeeId;
             if (!leaveMap[employeeId]) {
               leaveMap[employeeId] = [];
@@ -714,9 +715,12 @@ const StaffSchedule = () => {
     checkDate.setHours(0, 0, 0, 0);
     const checkTime = checkDate.getTime();
     
-    // Check if date falls within any approved or pending leave period
+    // Check if date falls within any approved leave period (pending leaves don't block scheduling)
     const isOnLeave = leaves.some(leave => {
       if (!leave.startDate || !leave.endDate) return false;
+      
+      // Only check approved leaves
+      if (leave.status !== 'approved') return false;
       
       // Dates should already be normalized Date objects from fetchLeaveRequests
       const startDate = leave.startDate instanceof Date ? leave.startDate : new Date(leave.startDate);
@@ -726,8 +730,6 @@ const StaffSchedule = () => {
       const endTime = endDate.getTime();
       
       const result = checkTime >= startTime && checkTime <= endTime;
-      
-      // Staff is on leave
       
       return result;
     });
@@ -1918,6 +1920,21 @@ const StaffSchedule = () => {
                               
                               // Check if staff is lent out on this date (lent OUT FROM this branch)
                               const isLentOut = date && isStaffLentOut(memberId, date);
+                              const lendingInfo = date && isLentOut ? lentOutData[memberId] : null;
+                              
+                              // Show lent out indicator if staff is lent out (can't edit)
+                              if (isLentOut && lendingInfo) {
+                                return (
+                                  <>
+                                    <div className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-100 text-blue-800">
+                                      LENT OUT
+                                    </div>
+                                    <div className="text-xs text-blue-600 font-medium text-center">
+                                      {lendingInfo.toBranchName}
+                                    </div>
+                                  </>
+                                );
+                              }
                               
                               // Check if borrowed staff (lent TO this branch) and date is outside lending period
                               const isBorrowedOutsidePeriod = date && isBorrowedStaffOutsideLendingPeriod(member, date);
@@ -1982,6 +1999,10 @@ const StaffSchedule = () => {
                               const onLeave = date && isStaffOnLeave(memberId, date);
                               const leaveInfo = date && onLeave ? getLeaveInfoForDate(memberId, date) : null;
                               
+                              // Check if staff is lent out on this date (lent OUT FROM this branch)
+                              const isLentOut = date && isStaffLentOut(memberId, date);
+                              const lendingInfo = date && isLentOut ? lentOutData[memberId] : null;
+                              
                               // Show leave indicator if staff is on leave
                               if (onLeave && leaveInfo) {
                                 const leaveTypeLabels = {
@@ -2007,6 +2028,20 @@ const StaffSchedule = () => {
                                         (Pending)
                                       </div>
                                     )}
+                                  </div>
+                                );
+                              }
+                              
+                              // Show lent out indicator if staff is lent out
+                              if (isLentOut && lendingInfo) {
+                                return (
+                                  <div className="flex flex-col items-center gap-1">
+                                    <div className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-100 text-blue-800">
+                                      LENT OUT
+                                    </div>
+                                    <div className="text-xs text-blue-600 font-medium text-center">
+                                      To {lendingInfo.toBranchName}
+                                    </div>
                                   </div>
                                 );
                               }
@@ -3008,7 +3043,13 @@ const StaffSchedule = () => {
                         cellContent = leaveType ? `ON LEAVE\n${leaveType}` : 'ON LEAVE';
                         cellStyle = { ...cellStyle, fontStyle: 'italic', whiteSpace: 'pre-line' };
                       } 
-                      // Check for lending (staff lent OUT from this branch)
+                      // Check if staff is lent out on this date (lent OUT FROM this branch)
+                      else if (isStaffLentOut(memberId, date)) {
+                        const lendingInfo = lentOutData[memberId];
+                        cellContent = lendingInfo?.toBranchName ? `LENT OUT\nTo ${lendingInfo.toBranchName}` : 'LENT OUT';
+                        cellStyle = { ...cellStyle, fontStyle: 'italic', whiteSpace: 'pre-line' };
+                      }
+                      // Check for lending (staff lent OUT from this branch) - legacy check
                       else if (shift?.isLending) {
                         cellContent = 'LENT OUT';
                         cellStyle = { ...cellStyle, fontStyle: 'italic' };

@@ -19,7 +19,8 @@ import {
 import { db, auth } from '../config/firebase';
 import { updateProfile as updateFirebaseProfile } from 'firebase/auth';
 import { logActivity } from './activityService';
-import { sendUserCreatedEmail, sendAccountActivatedEmail, sendAccountDeactivatedEmail } from './emailService';
+import { sendUserCreatedEmail, sendAccountActivatedEmail, sendAccountDeactivatedEmail, sendProfileUpdateEmail } from './emailService';
+import { getBranchById } from './branchService';
 import { initializeRolePasswordsWithMap } from './rolePasswordService';
 import { ROLE_LABELS } from '../utils/constants';
 import toast from 'react-hot-toast';
@@ -264,6 +265,15 @@ export const updateUser = async (userId, updates, currentUser) => {
       return currentData[key] !== updates[key];
     });
     
+    // Build changes object for email
+    const changes = changedFields.reduce((acc, field) => {
+      acc[field] = {
+        from: field === 'roles' ? currentData.roles : currentData[field],
+        to: updates[field]
+      };
+      return acc;
+    }, {});
+    
     await updateDoc(doc(db, 'users', userId), updateData);
     
     // Log activity with only changed fields
@@ -273,15 +283,64 @@ export const updateUser = async (userId, updates, currentUser) => {
       targetUser: userId,
       details: {
         changedFields: changedFields,
-        changes: changedFields.reduce((acc, field) => {
-          acc[field] = {
-            from: field === 'roles' ? currentData.roles : currentData[field],
-            to: updates[field]
-          };
-          return acc;
-        }, {})
+        changes: changes
       }
     });
+    
+    // Send email notification if profile details changed and user has email
+    if (changedFields.length > 0 && currentData.email) {
+      // Only send email for profile-related changes (not password or internal fields)
+      const profileFields = ['firstName', 'middleName', 'lastName', 'phone', 'branchId', 'roles', 'isActive', 'photoURL'];
+      const profileChanges = changedFields.filter(field => profileFields.includes(field));
+      
+      if (profileChanges.length > 0) {
+        try {
+          // Fetch branch names if branchId changed
+          const changesWithBranchNames = { ...changes };
+          if (profileChanges.includes('branchId')) {
+            try {
+              const oldBranchId = changes.branchId?.from;
+              const newBranchId = changes.branchId?.to;
+              
+              if (oldBranchId) {
+                try {
+                  const oldBranch = await getBranchById(oldBranchId);
+                  changesWithBranchNames.branchId.from = oldBranch.name || oldBranch.branchName || oldBranchId;
+                } catch (e) {
+                  changesWithBranchNames.branchId.from = oldBranchId;
+                }
+              } else {
+                changesWithBranchNames.branchId.from = 'Not Assigned';
+              }
+              
+              if (newBranchId) {
+                try {
+                  const newBranch = await getBranchById(newBranchId);
+                  changesWithBranchNames.branchId.to = newBranch.name || newBranch.branchName || newBranchId;
+                } catch (e) {
+                  changesWithBranchNames.branchId.to = newBranchId;
+                }
+              } else {
+                changesWithBranchNames.branchId.to = 'Not Assigned';
+              }
+            } catch (branchError) {
+              console.warn('Error fetching branch names for email:', branchError);
+            }
+          }
+          
+          await sendProfileUpdateEmail({
+            email: currentData.email,
+            firstName: updates.firstName || currentData.firstName,
+            lastName: updates.lastName || currentData.lastName,
+            changes: changesWithBranchNames,
+            changedFields: profileChanges
+          });
+        } catch (emailError) {
+          // Don't fail the update if email fails
+          console.error('Error sending profile update email:', emailError);
+      }
+      }
+    }
     
     toast.success('User updated successfully!');
   } catch (error) {

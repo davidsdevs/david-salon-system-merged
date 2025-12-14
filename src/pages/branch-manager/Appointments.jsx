@@ -27,6 +27,14 @@ const BranchManagerAppointments = () => {
   const [stats, setStats] = useState(null);
   const [services, setServices] = useState([]);
   const [stylists, setStylists] = useState([]);
+
+  // Set page title with role prefix
+  useEffect(() => {
+    document.title = 'Branch Manager - Appointments | DSMS';
+    return () => {
+      document.title = 'DSMS - David\'s Salon Management System';
+    };
+  }, []);
   
   // Filters
   const [searchTerm, setSearchTerm] = useState('');

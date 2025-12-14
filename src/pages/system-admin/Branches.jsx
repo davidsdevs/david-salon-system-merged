@@ -30,6 +30,14 @@ const Branches = () => {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [viewBranch, setViewBranch] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+  // Set page title with role prefix
+  useEffect(() => {
+    document.title = 'System Admin - Branches | DSMS';
+    return () => {
+      document.title = 'DSMS - David\'s Salon Management System';
+    };
+  }, []);
   const [branchToDelete, setBranchToDelete] = useState(null);
 
   useEffect(() => {

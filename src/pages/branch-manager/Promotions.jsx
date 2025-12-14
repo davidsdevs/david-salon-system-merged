@@ -62,6 +62,9 @@ const Promotions = () => {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
+  const [isConfirmSendModalOpen, setIsConfirmSendModalOpen] = useState(false);
+  const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false);
+  const [sendSuccessMessage, setSendSuccessMessage] = useState('');
   const [selectedPromotion, setSelectedPromotion] = useState(null);
   const [selectedClients, setSelectedClients] = useState(new Set());
   const [isSending, setIsSending] = useState(false);
@@ -491,7 +494,8 @@ const Promotions = () => {
             if (successCount > 0) {
               const message = `Promotion created and sent to ${successCount} client(s)${failCount > 0 ? ` (${failCount} failed)` : ''}!`;
               console.log('✅ SUCCESS:', message);
-              alert(message);
+              setSendSuccessMessage(message);
+              setIsSuccessModalOpen(true);
             } else {
               console.error('❌ All emails failed to send');
               setError('Promotion created but failed to send emails to clients.');
@@ -537,16 +541,27 @@ const Promotions = () => {
     }
   };
 
+  // Handle send promotion confirmation
+  const handleSendPromotionConfirm = () => {
+    if (!selectedPromotion || selectedClients.size === 0) {
+      setError('Please select at least one client');
+      return;
+    }
+    setIsConfirmSendModalOpen(true);
+  };
+
   // Handle send promotion emails
   const handleSendPromotion = async () => {
     if (!selectedPromotion || selectedClients.size === 0) {
       setError('Please select at least one client');
+      setIsConfirmSendModalOpen(false);
       return;
     }
 
     try {
       setIsSending(true);
       setError(null);
+      setIsConfirmSendModalOpen(false);
 
       const selectedClientsList = Array.from(selectedClients);
       const clientsToEmail = clients.filter(c => selectedClientsList.includes(c.id));
@@ -615,10 +630,19 @@ const Promotions = () => {
       
       await loadPromotions();
       
-      alert(`Promotion sent to ${emailResults.filter(r => r.success).length} client(s) successfully!`);
+      // Show success modal instead of alert
+      const successCount = emailResults.filter(r => r.success).length;
+      const failCount = emailResults.filter(r => !r.success).length;
+      let message = `Promotion sent to ${successCount} client(s) successfully!`;
+      if (failCount > 0) {
+        message += ` (${failCount} failed)`;
+      }
+      setSendSuccessMessage(message);
+      setIsSuccessModalOpen(true);
     } catch (err) {
       console.error('Error sending promotion:', err);
       setError(err.message || 'Failed to send promotion');
+      setIsConfirmSendModalOpen(false);
     } finally {
       setIsSending(false);
     }
@@ -1534,7 +1558,7 @@ const Promotions = () => {
                 Cancel
               </Button>
               <Button
-                onClick={handleSendPromotion}
+                onClick={handleSendPromotionConfirm}
                 disabled={selectedClients.size === 0 || isSending}
                 className="bg-[#160B53] text-white hover:bg-[#12094A]"
               >
@@ -1549,6 +1573,89 @@ const Promotions = () => {
                     Send to {selectedClients.size} Client(s)
                   </>
                 )}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirm Send Promotion Modal */}
+      {isConfirmSendModalOpen && selectedPromotion && (
+        <Modal
+          isOpen={isConfirmSendModalOpen}
+          onClose={() => setIsConfirmSendModalOpen(false)}
+          title="Confirm Send Promotion"
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h3 className="font-semibold text-blue-900 mb-2">{selectedPromotion.title}</h3>
+              <p className="text-sm text-blue-700">
+                {selectedPromotion.discountType === 'percentage' 
+                  ? `${selectedPromotion.discountValue}% OFF`
+                  : `₱${selectedPromotion.discountValue} OFF`}
+              </p>
+            </div>
+
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <p className="text-sm text-yellow-800">
+                <strong>Are you sure you want to send this promotion to {selectedClients.size} selected client(s)?</strong>
+              </p>
+              <p className="text-xs text-yellow-700 mt-2">
+                This will send promotional emails to all selected clients. This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => setIsConfirmSendModalOpen(false)}
+                disabled={isSending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSendPromotion}
+                disabled={isSending}
+                className="bg-[#160B53] text-white hover:bg-[#12094A]"
+              >
+                {isSending ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Mail className="h-4 w-4 mr-2" />
+                    Confirm & Send
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Success Modal */}
+      {isSuccessModalOpen && (
+        <Modal
+          isOpen={isSuccessModalOpen}
+          onClose={() => setIsSuccessModalOpen(false)}
+          title="Promotion Sent Successfully"
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
+              <CheckCircle className="h-12 w-12 text-green-600 mx-auto mb-3" />
+              <p className="text-green-800 font-medium">{sendSuccessMessage}</p>
+            </div>
+
+            <div className="flex justify-end pt-4">
+              <Button
+                onClick={() => setIsSuccessModalOpen(false)}
+                className="bg-[#160B53] text-white hover:bg-[#12094A]"
+              >
+                Close
               </Button>
             </div>
           </div>

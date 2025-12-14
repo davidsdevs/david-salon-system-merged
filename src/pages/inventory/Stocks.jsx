@@ -12,7 +12,7 @@ import { logActivity as activityServiceLogActivity } from '../../services/activi
 import { stockListenerService } from '../../services/stockListenerService';
 import { weeklyStockRecorder } from '../../services/weeklyStockRecorder';
 import { db, auth } from '../../config/firebase';
-import { collection, addDoc, serverTimestamp, getDocs, query, where, orderBy, limit, startAfter, getCountFromServer, updateDoc, doc, getDoc, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, getDocs, query, where, orderBy, limit, startAfter, getCountFromServer, updateDoc, doc, getDoc, Timestamp, writeBatch } from 'firebase/firestore';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { verifyRolePassword } from '../../services/rolePasswordService';
 import { USER_ROLES } from '../../utils/constants';
@@ -42,6 +42,7 @@ import {
   Package2,
   Activity,
   Home,
+  ArrowRight,
   ArrowRightLeft,
   QrCode,
   ShoppingCart,
@@ -51,11 +52,15 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
-  PackageCheck
+  ChevronDown,
+  ChevronUp,
+  PackageCheck,
+  Printer
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { exportToExcel } from '../../utils/excelExport';
 import { toast } from 'react-hot-toast';
+import * as XLSX from 'xlsx';
 
 const Stocks = () => {
   const { userData } = useAuth();
@@ -99,6 +104,7 @@ const Stocks = () => {
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [isCreateStockModalOpen, setIsCreateStockModalOpen] = useState(false);
   const [isEditStockModalOpen, setIsEditStockModalOpen] = useState(false);
+  const [expandedProducts, setExpandedProducts] = useState(new Set()); // Track which product groups are expanded
   
   // Stock deduction history states
   const [stockDeductions, setStockDeductions] = useState([]);
@@ -114,15 +120,10 @@ const Stocks = () => {
   const [adjustmentDateFilter, setAdjustmentDateFilter] = useState('all'); // 'all', '7days', '30days', '90days', '1year'
   const [adjustmentSearchTerm, setAdjustmentSearchTerm] = useState('');
   
-  // Edit stock form state
-  const [editStockForm, setEditStockForm] = useState({
-    weekOneStock: '',
-    weekTwoStock: '',
-    weekThreeStock: '',
-    weekFourStock: ''
-  });
-  const [editStockErrors, setEditStockErrors] = useState({});
-  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  // Edit stock form state (removed - no longer using week stocks)
+  // const [editStockForm, setEditStockForm] = useState({});
+  // const [editStockErrors, setEditStockErrors] = useState({});
+  // const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   
   // Product selection states for big data
   const [productSearchTerm, setProductSearchTerm] = useState('');
@@ -153,11 +154,7 @@ const Stocks = () => {
     productId: '',
     beginningStock: '',
     startPeriod: '',
-    endPeriod: '',
-    weekOneStock: '',
-    weekTwoStock: '',
-    weekThreeStock: '',
-    weekFourStock: ''
+    endPeriod: ''
   });
   const [createStockErrors, setCreateStockErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -167,6 +164,7 @@ const Stocks = () => {
   const [forceAdjustForm, setForceAdjustForm] = useState({
     productId: '',
     stockId: '',
+    batchNumber: '',
     currentStock: '',
     newStock: '',
     adjustmentQuantity: '',
@@ -176,6 +174,12 @@ const Stocks = () => {
   });
   const [forceAdjustErrors, setForceAdjustErrors] = useState({});
   const [isSubmittingAdjust, setIsSubmittingAdjust] = useState(false);
+  
+  // Import modal states
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importPassword, setImportPassword] = useState('');
+  const [importPasswordError, setImportPasswordError] = useState('');
+  const [isVerifyingPassword, setIsVerifyingPassword] = useState(false);
   
   // Filter states
   const [filters, setFilters] = useState({
@@ -570,18 +574,29 @@ const Stocks = () => {
       });
   };
 
-  // Calculate stock status based on stock levels
+  // Calculate stock status based on current stock levels (not batch)
   const calculateStockStatus = (stock) => {
-    const currentStock = stock.realTimeStock || stock.weekFourStock || stock.beginningStock || stock.currentStock || 0;
+    const currentStock = stock.realTimeStock || stock.remainingQuantity || stock.beginningStock || stock.currentStock || 0;
     const minStock = stock.minStock || stock.product?.minStock || 0;
+    const reorderThreshold = stock.reorderThreshold || stock.product?.reorderThreshold || (minStock * 1.5); // High stock threshold
     
-    if (currentStock > minStock) {
-      return 'In Stock';
-    } else if (currentStock > 0) {
-      return 'Low Stock';
-    } else {
+    if (currentStock === 0) {
       return 'Out of Stock';
+    } else if (currentStock <= minStock) {
+      return 'Low Stock';
+    } else if (currentStock > reorderThreshold) {
+      return 'High Stock';
+    } else {
+      return 'In Stock';
     }
+  };
+  
+  // Get stock level indicator (High/Low/Normal) based on current stock
+  const getStockLevel = (stock) => {
+    const status = calculateStockStatus(stock);
+    if (status === 'High Stock') return 'high';
+    if (status === 'Low Stock' || status === 'Out of Stock') return 'low';
+    return 'normal';
   };
 
   // Get all stocks (including all batches for each product)
@@ -671,7 +686,7 @@ const Stocks = () => {
         const stockUsageType = stock.usageType || 'otc'; // Default to 'otc' for backward compatibility
         const matchesUsageType = filters.usageType === 'all' || stockUsageType === filters.usageType;
         
-        const currentStock = stock.realTimeStock || stock.weekFourStock || stock.beginningStock || 0;
+        const currentStock = stock.realTimeStock || stock.remainingQuantity || stock.beginningStock || 0;
         const matchesStockRange = (!filters.stockRange.min || currentStock >= parseFloat(filters.stockRange.min)) &&
                                  (!filters.stockRange.max || currentStock <= parseFloat(filters.stockRange.max));
         
@@ -706,15 +721,85 @@ const Stocks = () => {
       });
   }, [currentMonthStocks, debouncedSearchTerm, filters, sortBy, sortOrder]);
 
+  // Group stocks by productId and usageType (for batch stocks)
+  const groupedStocks = useMemo(() => {
+    const groups = new Map();
+    const nonBatchStocks = [];
+    
+    filteredStocks.forEach(stock => {
+      const isBatchStock = stock.stockType === 'batch' || stock.batchId || stock.batchNumber;
+      
+      if (isBatchStock) {
+        // Group batch stocks by productId + usageType
+        const groupKey = `${stock.productId}_${stock.usageType || 'otc'}`;
+        
+        if (!groups.has(groupKey)) {
+          groups.set(groupKey, {
+            productId: stock.productId,
+            usageType: stock.usageType || 'otc',
+            product: stock.product,
+            productName: stock.productName || stock.product?.name || 'Unknown Product',
+            brand: stock.brand || stock.product?.brand || '',
+            upc: stock.upc || stock.product?.upc || '',
+            category: stock.category || stock.product?.category || '',
+            batches: [],
+            totalStock: 0,
+            totalBeginningStock: 0
+          });
+        }
+        
+        const group = groups.get(groupKey);
+        const currentStock = stock.realTimeStock || stock.remainingQuantity || stock.beginningStock || 0;
+        const beginningStock = stock.beginningStock || 0;
+        
+        group.batches.push(stock);
+        group.totalStock += currentStock;
+        group.totalBeginningStock += beginningStock;
+      } else {
+        // Non-batch stocks - keep as individual items
+        nonBatchStocks.push({
+          productId: stock.productId,
+          usageType: stock.usageType || 'otc',
+          product: stock.product,
+          productName: stock.productName || stock.product?.name || 'Unknown Product',
+          brand: stock.brand || stock.product?.brand || '',
+          upc: stock.upc || stock.product?.upc || '',
+          category: stock.category || stock.product?.category || '',
+          batches: [stock],
+          totalStock: stock.realTimeStock || stock.remainingQuantity || stock.beginningStock || 0,
+          totalBeginningStock: stock.beginningStock || 0,
+          isNonBatch: true
+        });
+      }
+    });
+    
+    // Sort batches within each group by batch number or received date
+    groups.forEach(group => {
+      group.batches.sort((a, b) => {
+        // Sort by batch number if available, otherwise by received date
+        if (a.batchNumber && b.batchNumber) {
+          return a.batchNumber.localeCompare(b.batchNumber);
+        }
+        if (a.receivedDate && b.receivedDate) {
+          return new Date(a.receivedDate) - new Date(b.receivedDate);
+        }
+        return 0;
+      });
+    });
+    
+    // Combine grouped batch stocks and non-batch stocks
+    return [...Array.from(groups.values()), ...nonBatchStocks];
+  }, [filteredStocks]);
+
   // Visible stocks for virtual scrolling (big data optimization)
   const visibleStocks = useMemo(() => {
-    return filteredStocks.slice(visibleStartIndex, visibleEndIndex);
-  }, [filteredStocks, visibleStartIndex, visibleEndIndex]);
+    return groupedStocks.slice(visibleStartIndex, visibleEndIndex);
+  }, [groupedStocks, visibleStartIndex, visibleEndIndex]);
 
   // Calculate total pages for pagination
   const totalPages = useMemo(() => {
-    return Math.ceil(filteredStocks.length / 50);
-  }, [filteredStocks.length]);
+    return Math.ceil(groupedStocks.length / 50);
+  }, [groupedStocks.length]);
 
   const currentPageNumber = useMemo(() => {
     return Math.floor(visibleStartIndex / 50) + 1;
@@ -722,10 +807,10 @@ const Stocks = () => {
 
   // Load more visible items (virtual scroll)
   const loadMoreVisible = useCallback(() => {
-    if (visibleEndIndex < filteredStocks.length) {
-      setVisibleEndIndex(prev => Math.min(prev + 50, filteredStocks.length));
+    if (visibleEndIndex < groupedStocks.length) {
+      setVisibleEndIndex(prev => Math.min(prev + 50, groupedStocks.length));
     }
-  }, [filteredStocks.length, visibleEndIndex]);
+  }, [groupedStocks.length, visibleEndIndex]);
 
   // Export stocks to Excel
   const handleExportStocks = () => {
@@ -754,7 +839,7 @@ const Stocks = () => {
       const exportData = filteredStocks.map(stock => {
         const product = stock.product || {};
         const isBatchStock = stock.stockType === 'batch' || stock.batchId || stock.batchNumber;
-        const currentStock = stock.realTimeStock || stock.weekFourStock || stock.beginningStock || 0;
+        const currentStock = stock.realTimeStock || stock.remainingQuantity || stock.beginningStock || 0;
         const status = calculateStockStatus(stock);
 
         return {
@@ -801,24 +886,15 @@ const Stocks = () => {
     setIsHistoryModalOpen(true);
   };
 
-  // Handle edit stock
-  const handleEditStock = (stock) => {
-    setEditStockForm({
-      weekOneStock: stock.weekOneStock?.toString() || '',
-      weekTwoStock: stock.weekTwoStock?.toString() || '',
-      weekThreeStock: stock.weekThreeStock?.toString() || '',
-      weekFourStock: stock.weekFourStock?.toString() || ''
-    });
-    setEditStockErrors({});
-    setIsEditStockModalOpen(true);
-  };
+  // Handle edit stock - REMOVED: No longer using week stocks
 
-  // Handle force adjust stock
+  // Handle force adjust stock (focus on batch)
   const handleForceAdjustStock = (stock) => {
     setForceAdjustForm({
       productId: stock.productId,
       stockId: stock.id,
-      currentStock: stock.realTimeStock || stock.weekFourStock || stock.beginningStock || 0,
+      batchNumber: stock.batchNumber || '',
+      currentStock: stock.realTimeStock || stock.remainingQuantity || stock.beginningStock || 0,
       newStock: '',
       adjustmentQuantity: '',
       reason: '',
@@ -829,72 +905,74 @@ const Stocks = () => {
     setIsForceAdjustModalOpen(true);
   };
   
-  // Verify manager code by checking branch manager's role password
+  // Verify manager code by checking ANY branch manager's role password in the branch
   const verifyManagerCode = async (code, branchId) => {
     try {
       if (!branchId || !code) {
         return false;
       }
 
-      // Get branch manager for this branch
+      // Get ALL branch managers for this branch
       const usersRef = collection(db, 'users');
       const q = query(
         usersRef,
-        where('role', '==', USER_ROLES.BRANCH_MANAGER),
         where('branchId', '==', branchId),
-        where('active', '==', true)
+        where('isActive', '==', true)
       );
       const snapshot = await getDocs(q);
       
       if (snapshot.empty) {
-        console.error('No branch manager found for branch:', branchId);
+        console.error('No active users found for branch:', branchId);
         return false;
       }
 
-      // Get the first branch manager (should be only one per branch)
-      const managerDoc = snapshot.docs[0];
-      const managerData = managerDoc.data();
-      const managerId = managerDoc.id;
-      
-      if (!managerId) {
-        console.error('Branch manager has no ID');
-        return false;
-      }
-
-      // Verify using the branch manager's role password
-      const isValid = await verifyRolePassword(managerId, USER_ROLES.BRANCH_MANAGER, code);
-      
-      if (isValid === null) {
-        // No role password set - fallback to Firebase Auth for backward compatibility
-        if (!managerData.email) {
-          console.error('Branch manager has no email and no role password set');
-          return false;
-        }
+      // Check each user to see if they are a branch manager and verify their role password
+      for (const userDoc of snapshot.docs) {
+        const userData = userDoc.data();
+        const userId = userDoc.id;
         
-        try {
-          const userCredential = await signInWithEmailAndPassword(auth, managerData.email, code);
-          if (userCredential.user) {
-            await new Promise(resolve => setTimeout(resolve, 100));
-            await signOut(auth);
-            return true;
+        // Check if user is a branch manager (check both role and roles array)
+        const isBranchManager = userData.role === USER_ROLES.BRANCH_MANAGER || 
+                                (userData.roles && userData.roles.includes(USER_ROLES.BRANCH_MANAGER));
+        
+        if (isBranchManager) {
+          // Verify using this branch manager's role password
+          const isValid = await verifyRolePassword(userId, USER_ROLES.BRANCH_MANAGER, code);
+          
+          if (isValid === true) {
+            return { valid: true, managerId: userId, managerName: userData.displayName || userData.name || userData.email };
           }
-          return false;
-        } catch (authError) {
-          console.error('Password verification failed:', authError);
-          return false;
+          
+          if (isValid === null) {
+            // No role password set - fallback to Firebase Auth for backward compatibility
+            if (userData.email) {
+              try {
+                const userCredential = await signInWithEmailAndPassword(auth, userData.email, code);
+                if (userCredential.user) {
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                  await signOut(auth);
+                  return { valid: true, managerId: userId, managerName: userData.displayName || userData.name || userData.email };
+                }
+              } catch (authError) {
+                // Continue to next manager
+                continue;
+              }
+            }
+          }
         }
       }
       
-      return isValid;
+      return { valid: false };
     } catch (error) {
       console.error('Error verifying manager code:', error);
-      return false;
+      return { valid: false };
     }
   };
 
   // Get status color
   const getStatusColor = (status) => {
     switch (status) {
+      case 'High Stock': return 'text-blue-600 bg-blue-100';
       case 'In Stock': return 'text-green-600 bg-green-100';
       case 'Low Stock': return 'text-yellow-600 bg-yellow-100';
       case 'Out of Stock': return 'text-red-600 bg-red-100';
@@ -905,11 +983,278 @@ const Stocks = () => {
   // Get status icon
   const getStatusIcon = (status) => {
     switch (status) {
+      case 'High Stock': return <TrendingUp className="h-4 w-4" />;
       case 'In Stock': return <CheckCircle className="h-4 w-4" />;
       case 'Low Stock': return <AlertTriangle className="h-4 w-4" />;
       case 'Out of Stock': return <XCircle className="h-4 w-4" />;
       default: return <Clock className="h-4 w-4" />;
     }
+  };
+  
+  // Handle import stocks from Excel
+  const handleImportStocks = async (importData, managerPassword) => {
+    try {
+      if (!managerPassword) {
+        return { success: false, error: 'Branch manager password is required' };
+      }
+
+      // Verify manager password
+      const verificationResult = await verifyManagerCode(managerPassword, userData?.branchId);
+      if (!verificationResult.valid) {
+        return { success: false, error: 'Invalid branch manager password' };
+      }
+
+      const verifiedManagerId = verificationResult.managerId;
+      const verifiedManagerName = verificationResult.managerName;
+
+      // Required columns for import
+      const requiredColumns = ['Batch Number', 'Current Stock'];
+
+      // Validate import data
+      if (!importData || importData.length === 0) {
+        return { success: false, error: 'No data to import' };
+      }
+
+      // Check if required columns exist
+      const firstRow = importData[0];
+      const hasRequiredColumns = requiredColumns.every(col => firstRow.hasOwnProperty(col));
+      if (!hasRequiredColumns) {
+        return { success: false, error: `Missing required columns: ${requiredColumns.join(', ')}` };
+      }
+
+      let successCount = 0;
+      let errorCount = 0;
+      const errors = [];
+
+      // Process each row
+      for (let i = 0; i < importData.length; i++) {
+        const row = importData[i];
+        const batchNumber = row['Batch Number']?.toString().trim();
+        const currentStockStr = row['Current Stock']?.toString().trim();
+        const productName = row['Product Name']?.toString().trim();
+        const productId = row['Product ID']?.toString().trim();
+
+        if (!batchNumber || !currentStockStr) {
+          errorCount++;
+          errors.push(`Row ${i + 2}: Missing batch number or current stock`);
+          continue;
+        }
+
+        const newStock = parseInt(currentStockStr);
+        if (isNaN(newStock) || newStock < 0) {
+          errorCount++;
+          errors.push(`Row ${i + 2}: Invalid stock value (must be a number >= 0)`);
+          continue;
+        }
+
+        try {
+          // Find stock by batch number
+          const stocksRef = collection(db, 'stocks');
+          const stockQuery = query(
+            stocksRef,
+            where('batchNumber', '==', batchNumber),
+            where('branchId', '==', userData?.branchId)
+          );
+          const stockSnapshot = await getDocs(stockQuery);
+
+          if (stockSnapshot.empty) {
+            errorCount++;
+            errors.push(`Row ${i + 2}: Batch number "${batchNumber}" not found`);
+            continue;
+          }
+
+          // Update all matching stocks (should typically be one)
+          const batch = writeBatch(db);
+          let updated = false;
+
+          stockSnapshot.docs.forEach((stockDoc) => {
+            const stockData = stockDoc.data();
+            const previousStock = stockData.realTimeStock || stockData.remainingQuantity || stockData.beginningStock || 0;
+
+            // Update stock
+            const stockRef = doc(db, 'stocks', stockDoc.id);
+            batch.update(stockRef, {
+              realTimeStock: newStock,
+              remainingQuantity: newStock,
+              updatedAt: serverTimestamp()
+            });
+
+            // Also update corresponding batch if it exists
+            if (stockData.batchId) {
+              const batchRef = doc(db, 'product_batches', stockData.batchId);
+              batch.update(batchRef, {
+                remainingQuantity: newStock,
+                updatedAt: serverTimestamp()
+              });
+            }
+
+            updated = true;
+          });
+
+          if (updated) {
+            await batch.commit();
+            successCount++;
+
+            // Log activity for first stock in batch
+            const firstStock = stockSnapshot.docs[0];
+            const firstStockData = firstStock.data();
+            await activityServiceLogActivity({
+              action: 'stock_import',
+              performedBy: userData?.uid,
+              targetUser: null,
+              branchId: userData?.branchId,
+              details: {
+                batchNumber: batchNumber,
+                productName: firstStockData.productName || productName || 'Unknown',
+                productId: firstStockData.productId || productId || 'Unknown',
+                previousStock: firstStockData.realTimeStock || firstStockData.remainingQuantity || 0,
+                newStock: newStock,
+                managerCode: managerPassword.substring(0, 4) + '****',
+                managerName: verifiedManagerName,
+                importMethod: 'excel_import'
+              },
+              description: `Stock imported via Excel: Batch ${batchNumber} updated from ${firstStockData.realTimeStock || firstStockData.remainingQuantity || 0} to ${newStock} units`,
+              timestamp: serverTimestamp()
+            });
+          }
+        } catch (err) {
+          console.error(`Error updating stock for batch ${batchNumber}:`, err);
+          errorCount++;
+          errors.push(`Row ${i + 2}: Error updating batch "${batchNumber}": ${err.message}`);
+        }
+      }
+
+      // Log overall import activity
+      await activityServiceLogActivity({
+        action: 'stock_bulk_import',
+        performedBy: userData?.uid,
+        targetUser: null,
+        branchId: userData?.branchId,
+        details: {
+          totalRows: importData.length,
+          successCount: successCount,
+          errorCount: errorCount,
+          managerCode: managerPassword.substring(0, 4) + '****',
+          managerName: verifiedManagerName,
+          errors: errors.slice(0, 10) // Log first 10 errors
+        },
+        description: `Bulk stock import completed: ${successCount} successful, ${errorCount} failed`,
+        timestamp: serverTimestamp()
+      });
+
+      // Reload stocks
+      await reloadStocks();
+
+      if (errorCount > 0) {
+        return {
+          success: true,
+          message: `Import completed: ${successCount} updated, ${errorCount} errors`,
+          errors: errors.slice(0, 10)
+        };
+      }
+
+      return {
+        success: true,
+        message: `Successfully imported ${successCount} stock record(s)`
+      };
+    } catch (error) {
+      console.error('Error importing stocks:', error);
+      return { success: false, error: error.message || 'Failed to import stocks' };
+    }
+  };
+
+  // Print/Report function for PDF generation
+  const handlePrintReport = () => {
+    if (!filteredStocks.length) {
+      toast.error('No stocks to print');
+      return;
+    }
+
+    // Create a print-friendly HTML content
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Stocks Report - ${userData?.branchName || 'Branch'}</title>
+          <style>
+            @media print {
+              @page { margin: 1cm; }
+            }
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            h1 { color: #160B53; margin-bottom: 10px; }
+            .header-info { margin-bottom: 20px; color: #666; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f3f4f6; font-weight: bold; }
+            .status-high { color: #2563eb; }
+            .status-normal { color: #16a34a; }
+            .status-low { color: #ca8a04; }
+            .status-out { color: #dc2626; }
+            .footer { margin-top: 30px; font-size: 12px; color: #666; }
+          </style>
+        </head>
+        <body>
+          <h1>Stocks Report</h1>
+          <div class="header-info">
+            <p><strong>Branch:</strong> ${userData?.branchName || 'N/A'}</p>
+            <p><strong>Generated:</strong> ${format(new Date(), 'MMM dd, yyyy HH:mm')}</p>
+            <p><strong>Total Items:</strong> ${filteredStocks.length}</p>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Product Name</th>
+                <th>Brand</th>
+                <th>Category</th>
+                <th>UPC</th>
+                <th>Batch Number</th>
+                <th>Beginning Stock</th>
+                <th>Current Stock</th>
+                <th>Status</th>
+                <th>Expiration Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredStocks.map(stock => {
+                const product = stock.product || {};
+                const currentStock = stock.realTimeStock || stock.remainingQuantity || stock.beginningStock || 0;
+                const status = calculateStockStatus(stock);
+                const statusClass = status === 'High Stock' ? 'status-high' : 
+                                  status === 'In Stock' ? 'status-normal' : 
+                                  status === 'Low Stock' ? 'status-low' : 'status-out';
+                return `
+                  <tr>
+                    <td>${stock.productName || product.name || 'N/A'}</td>
+                    <td>${stock.brand || product.brand || 'N/A'}</td>
+                    <td>${stock.category || product.category || 'N/A'}</td>
+                    <td>${stock.upc || product.upc || 'N/A'}</td>
+                    <td>${stock.batchNumber || 'N/A'}</td>
+                    <td>${stock.beginningStock || 0}</td>
+                    <td>${currentStock}</td>
+                    <td class="${statusClass}">${status}</td>
+                    <td>${stock.expirationDate ? format(new Date(stock.expirationDate), 'MMM dd, yyyy') : 'N/A'}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+          <div class="footer">
+            <p>This report is for branch manager viewing purposes only.</p>
+          </div>
+        </body>
+      </html>
+    `;
+
+    // Open print window
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    printWindow.focus();
+    
+    // Wait for content to load, then print
+    setTimeout(() => {
+      printWindow.print();
+    }, 250);
   };
 
   // Calculate stock statistics (memoized for performance)
@@ -964,21 +1309,230 @@ const Stocks = () => {
         }
       }
       
-      const logs = await getActivityLogs({
-        branchId: userData?.branchId,
-        limit: 100
+      const allLogs = [];
+      
+      // 1. Load from activity service
+      try {
+        const logs = await getActivityLogs({
+          branchId: userData?.branchId,
+          limit: 100
+        });
+        
+        // Filter by product/stock and date
+        const filteredLogs = logs.filter(log => {
+          const details = log.details || {};
+          if (details.entityId !== stockId && details.entityId !== productId) return false;
+          if (startDate && log.timestamp && new Date(log.timestamp) < startDate) return false;
+          if (endDate && log.timestamp && new Date(log.timestamp) > endDate) return false;
+          return true;
+        });
+        
+        allLogs.push(...filteredLogs);
+      } catch (error) {
+        console.error('Error loading activity logs:', error);
+      }
+      
+      // 2. Load transfers from inventory_movements for this product
+      try {
+        const movementsRef = collection(db, 'inventory_movements');
+        // Query without productId filter first to avoid index issues, then filter client-side
+        let movementsQuery = query(
+          movementsRef,
+          where('branchId', '==', userData?.branchId),
+          where('type', '==', 'stock_out'),
+          orderBy('createdAt', 'desc'),
+          limit(500) // Get more to filter client-side
+        );
+        
+        const movementsSnapshot = await getDocs(movementsQuery);
+        movementsSnapshot.forEach((doc) => {
+          const data = doc.data();
+          
+          // Filter by productId client-side
+          if (data.productId !== productId) return;
+          
+          const createdAt = data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
+          
+          // Filter by date if needed
+          if (startDate && createdAt < startDate) return;
+          if (endDate && createdAt > endDate) return;
+          
+          // Check if it's a transfer
+          if (data.reason === 'Stock Transfer' || data.notes?.includes('Transfer')) {
+            const transferMatch = data.notes?.match(/Transfer to (.+)/) || 
+                                 data.notes?.match(/Transfer from (.+)/);
+            const transferInfo = transferMatch ? transferMatch[1] : 'Another Branch';
+            
+            allLogs.push({
+              id: doc.id,
+              action: 'transfer',
+              entity: 'stock',
+              entityId: productId,
+              timestamp: createdAt,
+              user: data.createdBy || 'System',
+              details: {
+                type: 'stock_transfer',
+                productId: data.productId,
+                productName: data.productName,
+                quantity: data.quantity,
+                reason: `Stock Transfer - ${transferInfo}`,
+                notes: data.notes,
+                batchDeductions: data.batchDeductions || []
+              }
+            });
+          }
+        });
+      } catch (error) {
+        console.error('Error loading transfer movements:', error);
+        // If query fails, try without orderBy
+        try {
+          const movementsRef = collection(db, 'inventory_movements');
+          const movementsQuery = query(
+            movementsRef,
+            where('branchId', '==', userData?.branchId),
+            where('type', '==', 'stock_out'),
+            limit(500)
+          );
+          
+          const movementsSnapshot = await getDocs(movementsQuery);
+          movementsSnapshot.forEach((doc) => {
+            const data = doc.data();
+            if (data.productId !== productId) return;
+            if (data.reason === 'Stock Transfer' || data.notes?.includes('Transfer')) {
+              const createdAt = data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
+              if (startDate && createdAt < startDate) return;
+              if (endDate && createdAt > endDate) return;
+              
+              const transferMatch = data.notes?.match(/Transfer to (.+)/) || 
+                                   data.notes?.match(/Transfer from (.+)/);
+              const transferInfo = transferMatch ? transferMatch[1] : 'Another Branch';
+              
+              allLogs.push({
+                id: doc.id,
+                action: 'transfer',
+                entity: 'stock',
+                entityId: productId,
+                timestamp: createdAt,
+                user: data.createdBy || 'System',
+                details: {
+                  type: 'stock_transfer',
+                  productId: data.productId,
+                  productName: data.productName,
+                  quantity: data.quantity,
+                  reason: `Stock Transfer - ${transferInfo}`,
+                  notes: data.notes,
+                  batchDeductions: data.batchDeductions || []
+                }
+              });
+            }
+          });
+        } catch (fallbackError) {
+          console.error('Error loading transfer movements (fallback):', fallbackError);
+        }
+      }
+      
+      // 3. Load stock transfers from stock_transfer collection
+      try {
+        const transfersRef = collection(db, 'stock_transfer');
+        // Get outgoing transfers (where this branch sent stock)
+        const outgoingQuery = query(
+          transfersRef,
+          where('fromBranchId', '==', userData?.branchId),
+          orderBy('transferDate', 'desc'),
+          limit(100)
+        );
+        
+        const outgoingSnapshot = await getDocs(outgoingQuery);
+        outgoingSnapshot.forEach((doc) => {
+          const data = doc.data();
+          const transferDate = data.transferDate?.toDate ? data.transferDate.toDate() : new Date(data.transferDate);
+          
+          // Filter by date if needed
+          if (startDate && transferDate < startDate) return;
+          if (endDate && transferDate > endDate) return;
+          
+          // Check if this transfer includes the product
+          const items = data.items || [];
+          const productItem = items.find(item => item.productId === productId);
+          
+          if (productItem) {
+            allLogs.push({
+              id: `${doc.id}_transfer`,
+              action: 'transfer',
+              entity: 'stock',
+              entityId: productId,
+              timestamp: transferDate,
+              user: data.createdBy || 'System',
+              details: {
+                type: 'stock_transfer',
+                productId: productId,
+                productName: productItem.productName,
+                quantity: productItem.quantity,
+                reason: `Stock Transfer to ${data.toBranchName || 'Another Branch'}`,
+                notes: `Transfer ID: ${doc.id}`,
+                transferId: doc.id,
+                transferType: data.transferType || 'transfer',
+                status: data.status
+              }
+            });
+          }
+        });
+        
+        // Get incoming transfers (where this branch received stock)
+        const incomingQuery = query(
+          transfersRef,
+          where('toBranchId', '==', userData?.branchId),
+          orderBy('transferDate', 'desc'),
+          limit(100)
+        );
+        
+        const incomingSnapshot = await getDocs(incomingQuery);
+        incomingSnapshot.forEach((doc) => {
+          const data = doc.data();
+          const transferDate = data.transferDate?.toDate ? data.transferDate.toDate() : new Date(data.transferDate);
+          
+          // Filter by date if needed
+          if (startDate && transferDate < startDate) return;
+          if (endDate && transferDate > endDate) return;
+          
+          // Check if this transfer includes the product
+          const items = data.items || [];
+          const productItem = items.find(item => item.productId === productId);
+          
+          if (productItem) {
+            allLogs.push({
+              id: `${doc.id}_received`,
+              action: 'receive',
+              entity: 'stock',
+              entityId: productId,
+              timestamp: transferDate,
+              user: data.receivedBy || data.createdBy || 'System',
+              details: {
+                type: 'stock_received',
+                productId: productId,
+                productName: productItem.productName,
+                quantity: productItem.quantity,
+                reason: `Stock Received from ${data.fromBranchName || 'Another Branch'}`,
+                notes: `Transfer ID: ${doc.id}`,
+                transferId: doc.id,
+                transferType: data.transferType || 'transfer',
+                status: data.status
+              }
+            });
+          }
+        });
+      } catch (error) {
+        console.error('Error loading stock transfers:', error);
+      }
+      
+      // Sort all logs by timestamp (newest first)
+      allLogs.sort((a, b) => {
+        const timeA = a.timestamp instanceof Date ? a.timestamp : new Date(a.timestamp);
+        const timeB = b.timestamp instanceof Date ? b.timestamp : new Date(b.timestamp);
+        return timeB.getTime() - timeA.getTime();
       });
       
-      // Filter by product/stock and date
-      let filteredLogs = logs.filter(log => {
-        const details = log.details || {};
-        if (details.entityId !== stockId && details.entityId !== productId) return false;
-        if (startDate && log.timestamp && new Date(log.timestamp) < startDate) return false;
-        if (endDate && log.timestamp && new Date(log.timestamp) > endDate) return false;
-        return true;
-      });
-      
-      setActivityLogs(filteredLogs);
+      setActivityLogs(allLogs);
     } catch (error) {
       console.error('Error loading activity logs:', error);
       setActivityLogs([]);
@@ -987,7 +1541,7 @@ const Stocks = () => {
     }
   };
 
-  // Load stock deduction history from transactions
+  // Load stock deduction history from transactions and inventory movements (transfers, etc.)
   const loadStockDeductions = async () => {
     if (!userData?.branchId) return;
     
@@ -1007,59 +1561,132 @@ const Stocks = () => {
         startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
       }
       
-      // Query transactions with products
-      const transactionsRef = collection(db, 'transactions');
-      let transactionsQuery = query(
-        transactionsRef,
-        where('branchId', '==', userData.branchId),
-        where('status', '==', 'paid'),
-        orderBy('createdAt', 'desc'),
-        limit(500) // Limit to recent transactions
-      );
-      
-      const transactionsSnapshot = await getDocs(transactionsQuery);
-      
       const deductions = [];
       
-      transactionsSnapshot.forEach((doc) => {
-        const transactionData = doc.data();
-        const transactionId = doc.id;
+      // 1. Load deductions from transactions (sales)
+      try {
+        const transactionsRef = collection(db, 'transactions');
+        let transactionsQuery = query(
+          transactionsRef,
+          where('branchId', '==', userData.branchId),
+          where('status', '==', 'paid'),
+          orderBy('createdAt', 'desc'),
+          limit(500) // Limit to recent transactions
+        );
         
-        // Check if transaction has products
-        const salesType = transactionData.salesType || '';
-        if (salesType !== 'product' && salesType !== 'mixed') return;
+        const transactionsSnapshot = await getDocs(transactionsQuery);
         
-        // Filter date if needed
-        if (startDate) {
-          const createdAt = transactionData.createdAt?.toDate ? 
-            transactionData.createdAt.toDate() : 
-            new Date(transactionData.createdAt);
-          if (createdAt < startDate) return;
-        }
-        
-        // Extract product items
-        const items = transactionData.items || [];
-        const productItems = items.filter(item => item.type === 'product');
-        
-        productItems.forEach((item) => {
-          deductions.push({
-            id: `${transactionId}_${item.id}`,
-            transactionId: transactionId,
-            productId: item.id,
-            productName: item.name,
-            quantity: item.quantity || 1,
-            price: item.price || 0,
-            total: (item.price || 0) * (item.quantity || 1),
-            clientName: transactionData.clientName || 'Walk-in',
-            createdAt: transactionData.createdAt?.toDate ? 
+        transactionsSnapshot.forEach((doc) => {
+          const transactionData = doc.data();
+          const transactionId = doc.id;
+          
+          // Check if transaction has products
+          const salesType = transactionData.salesType || '';
+          if (salesType !== 'product' && salesType !== 'mixed') return;
+          
+          // Filter date if needed
+          if (startDate) {
+            const createdAt = transactionData.createdAt?.toDate ? 
               transactionData.createdAt.toDate() : 
-              new Date(transactionData.createdAt),
-            createdBy: transactionData.createdByName || transactionData.createdBy || 'Unknown',
-            branchName: transactionData.branchName || '',
-            paymentMethod: transactionData.paymentMethod || 'cash'
+              new Date(transactionData.createdAt);
+            if (createdAt < startDate) return;
+          }
+          
+          // Extract product items
+          const items = transactionData.items || [];
+          const productItems = items.filter(item => item.type === 'product');
+          
+          productItems.forEach((item) => {
+            deductions.push({
+              id: `${transactionId}_${item.id}`,
+              transactionId: transactionId,
+              productId: item.id,
+              productName: item.name,
+              quantity: item.quantity || 1,
+              price: item.price || 0,
+              total: (item.price || 0) * (item.quantity || 1),
+              clientName: transactionData.clientName || 'Walk-in',
+              createdAt: transactionData.createdAt?.toDate ? 
+                transactionData.createdAt.toDate() : 
+                new Date(transactionData.createdAt),
+              createdBy: transactionData.createdByName || transactionData.createdBy || 'Unknown',
+              branchName: transactionData.branchName || '',
+              paymentMethod: transactionData.paymentMethod || 'cash',
+              source: 'transaction'
+            });
           });
         });
-      });
+      } catch (error) {
+        console.error('Error loading transaction deductions:', error);
+      }
+      
+      // 2. Load deductions from inventory_movements (transfers, adjustments, etc.)
+      try {
+        const movementsRef = collection(db, 'inventory_movements');
+        let movementsQuery = query(
+          movementsRef,
+          where('branchId', '==', userData.branchId),
+          where('type', '==', 'stock_out'),
+          orderBy('createdAt', 'desc'),
+          limit(500) // Limit to recent movements
+        );
+        
+        const movementsSnapshot = await getDocs(movementsQuery);
+        
+        movementsSnapshot.forEach((doc) => {
+          const movementData = doc.data();
+          const movementId = doc.id;
+          
+          // Filter date if needed
+          if (startDate) {
+            const createdAt = movementData.createdAt?.toDate ? 
+              movementData.createdAt.toDate() : 
+              new Date(movementData.createdAt);
+            if (createdAt < startDate) return;
+          }
+          
+          // Determine source type from reason/notes
+          let sourceType = 'adjustment';
+          let displayReason = movementData.reason || 'Stock Deduction';
+          
+          if (movementData.reason === 'Stock Transfer' || movementData.notes?.includes('Transfer')) {
+            sourceType = 'transfer';
+            // Extract transfer info from notes
+            const transferMatch = movementData.notes?.match(/Transfer to (.+)/) || 
+                                 movementData.notes?.match(/Transfer from (.+)/);
+            if (transferMatch) {
+              displayReason = `Stock Transfer - ${transferMatch[1]}`;
+            } else {
+              displayReason = 'Stock Transfer';
+            }
+          } else if (movementData.reason === 'Service Use' || movementData.notes?.includes('Service')) {
+            sourceType = 'service';
+            displayReason = 'Service Use';
+          }
+          
+          deductions.push({
+            id: movementId,
+            movementId: movementId,
+            productId: movementData.productId,
+            productName: movementData.productName || 'Unknown Product',
+            quantity: movementData.quantity || 0,
+            price: 0, // Movements don't have price
+            total: 0,
+            clientName: displayReason,
+            createdAt: movementData.createdAt?.toDate ? 
+              movementData.createdAt.toDate() : 
+              new Date(movementData.createdAt),
+            createdBy: movementData.createdBy || 'System',
+            branchName: userData.branchName || '',
+            paymentMethod: 'N/A',
+            source: sourceType,
+            notes: movementData.notes || '',
+            batchDeductions: movementData.batchDeductions || []
+          });
+        });
+      } catch (error) {
+        console.error('Error loading inventory movement deductions:', error);
+      }
       
       // Sort by date (newest first)
       deductions.sort((a, b) => b.createdAt - a.createdAt);
@@ -1337,61 +1964,21 @@ const Stocks = () => {
             <p className="text-gray-600">Track inventory levels and stock movements</p>
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="outline" className="flex items-center gap-2">
+            <Button 
+              variant="outline" 
+              className="flex items-center gap-2"
+              onClick={() => setIsImportModalOpen(true)}
+            >
               <Upload className="h-4 w-4" />
               Import
             </Button>
-            <Button variant="outline" className="flex items-center gap-2">
+            <Button variant="outline" className="flex items-center gap-2" onClick={handleExportStocks}>
               <Download className="h-4 w-4" />
               Export
             </Button>
-            <Button 
-              variant="outline"
-              className="flex items-center gap-2"
-              onClick={async () => {
-                if (!userData?.branchId) {
-                  alert('Branch ID not found');
-                  return;
-                }
-                
-                const now = new Date();
-                const currentDate = now.getDate();
-                let weekNumber;
-                if (currentDate <= 7) {
-                  weekNumber = 1;
-                } else if (currentDate <= 14) {
-                  weekNumber = 2;
-                } else if (currentDate <= 21) {
-                  weekNumber = 3;
-                } else {
-                  weekNumber = 4;
-                }
-
-                if (confirm(`Record Week ${weekNumber} stock for all products?`)) {
-                  try {
-                    const userName = userData?.displayName || userData?.name || userData?.email || 'System';
-                    const result = await weeklyStockRecorder.recordWeeklyStock(
-                      userData.branchId,
-                      weekNumber,
-                      userData?.uid,
-                      userName
-                    );
-                    
-                    if (result.success) {
-                      alert(`Successfully recorded Week ${weekNumber} stock for ${result.recorded.length} products!`);
-                      await reloadStocks();
-                    } else {
-                      alert(`Error: ${result.message}`);
-                    }
-                  } catch (error) {
-                    console.error('Error recording weekly stock:', error);
-                    alert('Failed to record weekly stock. Please try again.');
-                  }
-                }
-              }}
-            >
-              <Calendar className="h-4 w-4" />
-              Record Week Stock
+            <Button variant="outline" className="flex items-center gap-2" onClick={handlePrintReport}>
+              <Printer className="h-4 w-4" />
+              Report
             </Button>
             {/* Only allow system admins to create stock manually - all other stock must come from Purchase Orders */}
             {(userData?.role === 'systemAdmin' || userData?.role === 'operationalManager') && (
@@ -1688,7 +2275,7 @@ const Stocks = () => {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Stock Deduction History</h2>
-                <p className="text-gray-600 text-sm mt-1">View all stock deductions from transactions</p>
+                <p className="text-gray-600 text-sm mt-1">View all stock deductions from transactions, transfers, and services</p>
               </div>
               <div className="flex items-center gap-3">
                 <select
@@ -1749,10 +2336,10 @@ const Stocks = () => {
                         Quantity
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                        Client
+                        Source / Client
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                        Transaction ID
+                        Reference ID
                       </th>
                       <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                         Amount
@@ -1770,7 +2357,9 @@ const Stocks = () => {
                         return (
                           deduction.productName?.toLowerCase().includes(search) ||
                           deduction.clientName?.toLowerCase().includes(search) ||
-                          deduction.transactionId?.toLowerCase().includes(search)
+                          deduction.transactionId?.toLowerCase().includes(search) ||
+                          deduction.movementId?.toLowerCase().includes(search) ||
+                          deduction.notes?.toLowerCase().includes(search)
                         );
                       })
                       .map((deduction) => (
@@ -1794,16 +2383,38 @@ const Stocks = () => {
                             </span>
                           </td>
                           <td className="px-4 py-3">
-                            <div className="text-sm text-gray-900">{deduction.clientName}</div>
+                            {deduction.source === 'transfer' ? (
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                  Transfer
+                                </span>
+                                <span className="text-sm text-gray-700">{deduction.clientName}</span>
+                              </div>
+                            ) : deduction.source === 'service' ? (
+                              <div className="flex items-center gap-2">
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                  Service
+                                </span>
+                                <span className="text-sm text-gray-700">{deduction.clientName}</span>
+                              </div>
+                            ) : (
+                              <div className="text-sm text-gray-900">{deduction.clientName}</div>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <div className="text-sm text-gray-600 font-mono">
-                              #{deduction.transactionId.slice(-8)}
+                              {deduction.transactionId ? `#${deduction.transactionId.slice(-8)}` : 
+                               deduction.movementId ? `#${deduction.movementId.slice(-8)}` : 'N/A'}
                             </div>
+                            {deduction.batchDeductions && deduction.batchDeductions.length > 0 && (
+                              <div className="text-xs text-gray-500 mt-1">
+                                Batches: {deduction.batchDeductions.map(b => b.batchNumber || b.batchId).join(', ')}
+                              </div>
+                            )}
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap">
                             <div className="text-sm font-semibold text-gray-900">
-                              ₱{deduction.total.toLocaleString()}
+                              {deduction.total > 0 ? `₱${deduction.total.toLocaleString()}` : 'N/A'}
                             </div>
                           </td>
                           <td className="px-4 py-3">
@@ -1874,6 +2485,7 @@ const Stocks = () => {
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
                 <option value="all">All Status</option>
+                <option value="High Stock">High Stock</option>
                 <option value="In Stock">In Stock</option>
                 <option value="Low Stock">Low Stock</option>
                 <option value="Out of Stock">Out of Stock</option>
@@ -1902,24 +2514,6 @@ const Stocks = () => {
               >
                 <Download className="h-4 w-4" />
                 Export Excel
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setFilters({
-                    status: 'all',
-                    category: 'all',
-                    stockRange: { min: '', max: '' },
-                    lowStock: false,
-                    usageType: 'all'
-                  });
-                  setSearchTerm('');
-                  reloadStocks();
-                }}
-                className="flex items-center gap-2"
-              >
-                <RefreshCw className="h-4 w-4" />
-                Reset
               </Button>
             </div>
           </div>
@@ -1950,115 +2544,245 @@ const Stocks = () => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {visibleStocks.map((stockData) => {
-                  const stock = stockData;
-                  const product = stockData.product;
-                  const currentStock = stock.realTimeStock || stock.weekFourStock || stock.beginningStock || 0;
-                  const productName = stock.productName || product?.name || 'Unknown Product';
-                  const brand = stock.brand || product?.brand || '';
-                  const upc = stock.upc || product?.upc || '';
-                  const category = stock.category || product?.category || '';
-                  const monthLabel = stock.startPeriod ? format(new Date(stock.startPeriod), 'MMMM yyyy') : 'Unknown';
+                {visibleStocks.map((groupData) => {
+                  const firstBatch = groupData.batches[0];
+                  const product = groupData.product;
+                  const productName = groupData.productName;
+                  const brand = groupData.brand;
+                  const upc = groupData.upc;
+                  const category = groupData.category;
+                  const isExpanded = expandedProducts.has(`${groupData.productId}_${groupData.usageType}`);
+                  const hasMultipleBatches = groupData.batches.length > 1 && !groupData.isNonBatch;
                   
-                  // Check if this is a batch_stock
-                  const isBatchStock = stock.stockType === 'batch' || stock.batchId || stock.batchNumber;
-                  const batchNumber = stock.batchNumber || 'N/A';
-                  const batchId = stock.batchId || null;
+                  // For non-batch stocks, render as before
+                  if (groupData.isNonBatch) {
+                    const stock = firstBatch;
+                    const currentStock = stock.realTimeStock || stock.remainingQuantity || stock.beginningStock || 0;
+                    const monthLabel = stock.startPeriod ? format(new Date(stock.startPeriod), 'MMMM yyyy') : 'Unknown';
+                    
+                    return (
+                      <tr key={stock.id} className="hover:bg-gray-50">
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <div className="text-sm font-medium text-gray-900">{productName}</div>
+                              {stock.usageType && (
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                                  stock.usageType === 'salon-use'
+                                    ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                    : 'bg-green-100 text-green-800 border border-green-200'
+                                }`}>
+                                  {stock.usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs md:text-sm text-gray-500">{brand} • {upc}</div>
+                            <div className="text-xs text-gray-400 hidden md:block">{category}</div>
+                          </div>
+                        </td>
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden md:table-cell">
+                          <div className="text-sm font-medium text-blue-900">{stock.beginningStock || 0}</div>
+                          <div className="text-xs text-blue-600">Beginning</div>
+                        </td>
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm font-medium text-gray-900">{currentStock}</div>
+                          <div className="text-xs text-gray-500">{monthLabel}</div>
+                        </td>
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(stock.status || 'In Stock')}`}>
+                            {getStatusIcon(stock.status || 'In Stock')}
+                            {stock.status || 'In Stock'}
+                          </span>
+                        </td>
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => handleViewDetails(stock)} className="flex items-center gap-1">
+                              <Eye className="h-3 w-3" /> View
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleViewHistory(stock)} className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> History
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleForceAdjustStock(stock)} className="flex items-center gap-1 border-orange-300 text-orange-600 hover:bg-orange-50">
+                              <AlertTriangle className="h-3 w-3" /> Force Adjust
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  
+                  // For batch stocks with grouping
+                  const firstBatchStock = firstBatch.realTimeStock || firstBatch.remainingQuantity || firstBatch.beginningStock || 0;
+                  const firstBatchBeginningStock = firstBatch.beginningStock || 0;
+                  const firstBatchNumber = firstBatch.batchNumber || 'N/A';
+                  const firstBatchExpiration = firstBatch.expirationDate ? format(new Date(firstBatch.expirationDate), 'MMM dd, yyyy') : null;
+                  const firstBatchReceived = firstBatch.receivedDate ? format(new Date(firstBatch.receivedDate), 'MMM dd, yyyy') : null;
                   
                   return (
-                  <tr key={stock.id || `${stock.productId}-${stock.startPeriod}-${batchId}`} className={`hover:bg-gray-50 ${isBatchStock ? 'bg-blue-50/30' : ''}`}>
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap">
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div className="text-sm font-medium text-gray-900">{productName}</div>
-                          {isBatchStock && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                              Batch: {batchNumber}
-                            </span>
-                          )}
-                          {/* Usage Type Badge - Always show for batch stocks */}
-                          {isBatchStock && (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
-                              (stock.usageType || 'otc') === 'salon-use'
-                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                                : 'bg-green-100 text-green-800 border border-green-200'
-                            }`}>
-                              {(stock.usageType || 'otc') === 'salon-use' ? 'Salon Use' : 'OTC'}
-                            </span>
-                          )}
-                          {/* Usage Type Badge for non-batch stocks */}
-                          {!isBatchStock && stock.usageType && (
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
-                              stock.usageType === 'salon-use'
-                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                                : 'bg-green-100 text-green-800 border border-green-200'
-                            }`}>
-                              {stock.usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs md:text-sm text-gray-500">{brand} • {upc}</div>
-                        <div className="text-xs text-gray-400 hidden md:block">
-                          {category}
-                          {isBatchStock && stock.expirationDate && (
-                            <span className="ml-2 text-orange-600">
-                              • Expires: {format(new Date(stock.expirationDate), 'MMM dd, yyyy')}
-                            </span>
-                          )}
-                        </div>
-                        {isBatchStock && stock.receivedDate && (
-                          <div className="text-xs text-gray-400 hidden md:block">
-                            Received: {format(new Date(stock.receivedDate), 'MMM dd, yyyy')}
+                    <React.Fragment key={`${groupData.productId}_${groupData.usageType}`}>
+                      {/* Main row - First batch */}
+                      <tr className="hover:bg-gray-50 bg-blue-50/30">
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <div className="text-sm font-medium text-gray-900">{productName}</div>
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                                Batch: {firstBatchNumber}
+                              </span>
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                                groupData.usageType === 'salon-use'
+                                  ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                  : 'bg-green-100 text-green-800 border border-green-200'
+                              }`}>
+                                {groupData.usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
+                              </span>
+                              {hasMultipleBatches && (
+                                <button
+                                  onClick={() => {
+                                    const key = `${groupData.productId}_${groupData.usageType}`;
+                                    setExpandedProducts(prev => {
+                                      const newSet = new Set(prev);
+                                      if (newSet.has(key)) {
+                                        newSet.delete(key);
+                                      } else {
+                                        newSet.add(key);
+                                      }
+                                      return newSet;
+                                    });
+                                  }}
+                                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-gray-100 text-gray-700 border border-gray-300 hover:bg-gray-200 transition-colors"
+                                >
+                                  {isExpanded ? (
+                                    <>
+                                      <ChevronUp className="h-3 w-3 mr-1" />
+                                      Hide ({groupData.batches.length - 1})
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ChevronDown className="h-3 w-3 mr-1" />
+                                      Show ({groupData.batches.length - 1})
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                            <div className="text-xs md:text-sm text-gray-500">{brand} • {upc}</div>
+                            <div className="text-xs text-gray-400 hidden md:block">
+                              {category}
+                              {firstBatchExpiration && (
+                                <span className="ml-2 text-orange-600">• Expires: {firstBatchExpiration}</span>
+                              )}
+                            </div>
+                            {firstBatchReceived && (
+                              <div className="text-xs text-gray-400 hidden md:block">
+                                Received: {firstBatchReceived}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden md:table-cell">
-                      <div className="text-sm font-medium text-blue-900">{stock.beginningStock || 0}</div>
-                      <div className="text-xs text-blue-600">Beginning</div>
-                    </td>
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">{currentStock}</div>
-                      <div className="text-xs text-gray-500">{monthLabel}</div>
-                    </td>
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap">
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(stock.status || 'In Stock')}`}>
-                        {getStatusIcon(stock.status || 'In Stock')}
-                        {stock.status || 'In Stock'}
-                      </span>
-                    </td>
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleViewDetails(stock)}
-                          className="flex items-center gap-1"
-                        >
-                          <Eye className="h-3 w-3" />
-                          View
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleViewHistory(stock)}
-                          className="flex items-center gap-1"
-                        >
-                          <Calendar className="h-3 w-3" />
-                          History
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleForceAdjustStock(stock)}
-                          className="flex items-center gap-1 border-orange-300 text-orange-600 hover:bg-orange-50"
-                        >
-                          <AlertTriangle className="h-3 w-3" />
-                          Force Adjust
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+                        </td>
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden md:table-cell">
+                          <div className="text-sm font-medium text-blue-900">{firstBatchBeginningStock}</div>
+                          <div className="text-xs text-blue-600">Beginning</div>
+                        </td>
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">{firstBatchStock}</div>
+                              <div className="text-xs text-gray-500">Batch 1</div>
+                            </div>
+                            {hasMultipleBatches && (
+                              <div className="ml-2 pl-2 border-l border-gray-300">
+                                <div className="text-sm font-bold text-[#160B53]">{groupData.totalStock}</div>
+                                <div className="text-xs text-gray-500">Total</div>
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(firstBatch.status || 'In Stock')}`}>
+                            {getStatusIcon(firstBatch.status || 'In Stock')}
+                            {firstBatch.status || 'In Stock'}
+                          </span>
+                        </td>
+                        <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium">
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => handleViewDetails(firstBatch)} className="flex items-center gap-1">
+                              <Eye className="h-3 w-3" /> View
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleViewHistory(firstBatch)} className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> History
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => handleForceAdjustStock(firstBatch)} className="flex items-center gap-1 border-orange-300 text-orange-600 hover:bg-orange-50">
+                              <AlertTriangle className="h-3 w-3" /> Force Adjust
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                      
+                      {/* Expanded rows - Other batches */}
+                      {isExpanded && hasMultipleBatches && groupData.batches.slice(1).map((batch, idx) => {
+                        const batchStock = batch.realTimeStock || batch.remainingQuantity || batch.beginningStock || 0;
+                        const batchNumber = batch.batchNumber || 'N/A';
+                        const batchExpiration = batch.expirationDate ? format(new Date(batch.expirationDate), 'MMM dd, yyyy') : null;
+                        const batchReceived = batch.receivedDate ? format(new Date(batch.receivedDate), 'MMM dd, yyyy') : null;
+                        
+                        return (
+                          <tr key={`${batch.id || batch.batchId}_${idx}`} className="hover:bg-gray-50 bg-blue-50/20">
+                            <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                              <div className="flex items-start">
+                                <div className="flex-shrink-0 w-8 md:w-12 flex items-center justify-center">
+                                  <ArrowRight className="h-4 w-4 text-gray-400" />
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                                      Batch: {batchNumber}
+                                    </span>
+                                  </div>
+                                  {batchExpiration && (
+                                    <div className="text-xs text-gray-400 hidden md:block mt-1">
+                                      Expires: {batchExpiration}
+                                    </div>
+                                  )}
+                                  {batchReceived && (
+                                    <div className="text-xs text-gray-400 hidden md:block mt-1">
+                                      Received: {batchReceived}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden md:table-cell">
+                              <div className="text-sm font-medium text-blue-900">{batch.beginningStock || 0}</div>
+                              <div className="text-xs text-blue-600">Beginning</div>
+                            </td>
+                            <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                              <div className="text-sm font-medium text-gray-900">{batchStock}</div>
+                              <div className="text-xs text-gray-500">Batch {idx + 2}</div>
+                            </td>
+                            <td className="px-3 md:px-6 py-4 whitespace-nowrap">
+                              <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(batch.status || 'In Stock')}`}>
+                                {getStatusIcon(batch.status || 'In Stock')}
+                                {batch.status || 'In Stock'}
+                              </span>
+                            </td>
+                            <td className="px-3 md:px-6 py-4 whitespace-nowrap text-sm font-medium">
+                              <div className="flex gap-2">
+                                <Button variant="outline" size="sm" onClick={() => handleViewDetails(batch)} className="flex items-center gap-1">
+                                  <Eye className="h-3 w-3" /> View
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={() => handleViewHistory(batch)} className="flex items-center gap-1">
+                                  <Calendar className="h-3 w-3" /> History
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={() => handleForceAdjustStock(batch)} className="flex items-center gap-1 border-orange-300 text-orange-600 hover:bg-orange-50">
+                                  <AlertTriangle className="h-3 w-3" /> Force Adjust
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -2071,8 +2795,8 @@ const Stocks = () => {
             {/* Pagination Info */}
             <div className="text-sm text-gray-600">
               Showing <span className="font-medium">{visibleStartIndex + 1}</span> to{' '}
-              <span className="font-medium">{Math.min(visibleEndIndex, filteredStocks.length)}</span> of{' '}
-              <span className="font-medium">{filteredStocks.length}</span> filtered items
+              <span className="font-medium">{Math.min(visibleEndIndex, groupedStocks.length)}</span> of{' '}
+              <span className="font-medium">{groupedStocks.length}</span> filtered items
               {stockStats.totalItems > stockStats.loadedItems && (
                 <span className="ml-2 text-blue-600">
                   ({stockStats.loadedItems} loaded, {totalItems} total in database)
@@ -2105,11 +2829,11 @@ const Stocks = () => {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  const newStart = Math.min(filteredStocks.length - 50, visibleStartIndex + 50);
+                  const newStart = Math.min(groupedStocks.length - 50, visibleStartIndex + 50);
                   setVisibleStartIndex(newStart);
-                  setVisibleEndIndex(Math.min(newStart + 50, filteredStocks.length));
+                  setVisibleEndIndex(Math.min(newStart + 50, groupedStocks.length));
                 }}
-                disabled={visibleEndIndex >= filteredStocks.length}
+                disabled={visibleEndIndex >= groupedStocks.length}
                 className="flex items-center gap-1"
               >
                 Next
@@ -2119,7 +2843,7 @@ const Stocks = () => {
           </div>
 
           {/* Load More from Database Button */}
-          {hasMore && filteredStocks.length > 0 && !loadingMore && (
+          {hasMore && groupedStocks.length > 0 && !loadingMore && (
             <div className="px-6 py-3 bg-blue-50 border-t flex justify-center">
               <Button
                 variant="outline"
@@ -2144,7 +2868,7 @@ const Stocks = () => {
           )}
 
           {/* Load More Visible Items (Virtual Scroll) */}
-          {visibleEndIndex < filteredStocks.length && !loadingMore && (
+          {visibleEndIndex < groupedStocks.length && !loadingMore && (
             <div className="px-6 py-3 bg-gray-50 border-t flex justify-center">
               <Button
                 variant="outline"
@@ -2153,14 +2877,14 @@ const Stocks = () => {
                 className="flex items-center gap-2"
               >
                 <ArrowRightLeft className="h-4 w-4" />
-                Show More ({filteredStocks.length - visibleEndIndex} more items)
+                Show More ({groupedStocks.length - visibleEndIndex} more items)
               </Button>
             </div>
           )}
         </Card>
 
         {/* Empty State */}
-        {filteredStocks.length === 0 && !loading && (
+        {groupedStocks.length === 0 && !loading && (
           <Card className="p-12 text-center">
             <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-semibold text-gray-900 mb-2">No Stock Items Found</h3>
@@ -2283,24 +3007,8 @@ const Stocks = () => {
                     <p className="text-lg font-bold text-blue-900">{selectedStock.beginningStock || 0} units</p>
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-blue-700">Week 1 Stock</label>
-                    <p className="text-lg font-bold text-blue-900">{selectedStock.weekOneStock || 0} units</p>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-blue-700">Week 2 Stock</label>
-                    <p className="text-lg font-bold text-blue-900">{selectedStock.weekTwoStock || 0} units</p>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-blue-700">Week 3 Stock</label>
-                    <p className="text-lg font-bold text-blue-900">{selectedStock.weekThreeStock || 0} units</p>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-blue-700">Week 4 Stock</label>
-                    <p className="text-lg font-bold text-blue-900">{selectedStock.weekFourStock || 0} units</p>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-blue-700">Real-time Stock</label>
-                    <p className="text-lg font-bold text-green-600">{selectedStock.realTimeStock || 0} units</p>
+                    <label className="text-xs font-medium text-blue-700">Current Stock</label>
+                    <p className="text-lg font-bold text-green-600">{selectedStock.realTimeStock || selectedStock.remainingQuantity || 0} units</p>
                   </div>
                   <div className="col-span-2">
                     <label className="text-xs font-medium text-blue-700">Period</label>
@@ -2379,264 +3087,10 @@ const Stocks = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setIsDetailsModalOpen(false);
-                    handleEditStock(selectedStock);
-                  }}
-                >
-                  <Edit className="h-4 w-4 mr-2" />
-                  Edit Weekly Stocks
-                </Button>
-              </div>
             </div>
           </Modal>
         )}
 
-        {/* Edit Stock Modal */}
-        {isEditStockModalOpen && selectedStock && (
-          <Modal
-            isOpen={isEditStockModalOpen}
-            onClose={() => {
-              setIsEditStockModalOpen(false);
-              setEditStockForm({
-                weekOneStock: '',
-                weekTwoStock: '',
-                weekThreeStock: '',
-                weekFourStock: ''
-              });
-              setEditStockErrors({});
-            }}
-            title={`Edit Weekly Stocks - ${selectedStock.productName || 'Product'}`}
-            size="lg"
-          >
-            <div className="space-y-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-800">
-                  <strong>Period:</strong> {selectedStock.startPeriod ? format(new Date(selectedStock.startPeriod), 'MMM dd, yyyy') : 'N/A'} - 
-                  {selectedStock.endPeriod ? format(new Date(selectedStock.endPeriod), ' MMM dd, yyyy') : ' N/A'}
-                  <br />
-                  <strong>Beginning Stock:</strong> {selectedStock.beginningStock || 0} units
-                </p>
-              </div>
-
-              <div>
-                <h4 className="text-base font-semibold text-gray-900 mb-4">Record Weekly Stock Counts</h4>
-                <p className="text-sm text-gray-600 mb-4">
-                  Record the actual physical count at the end of each week as the month progresses.
-                </p>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Week 1 Stock Count
-                    </label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder="Record at end of Week 1"
-                      value={editStockForm.weekOneStock}
-                      onChange={(e) => {
-                        setEditStockForm(prev => ({ ...prev, weekOneStock: e.target.value }));
-                        setEditStockErrors(prev => ({ ...prev, weekOneStock: '' }));
-                      }}
-                      className={editStockErrors.weekOneStock ? 'border-red-500' : ''}
-                    />
-                    {editStockErrors.weekOneStock && (
-                      <p className="text-red-500 text-xs mt-1">{editStockErrors.weekOneStock}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Week 2 Stock Count
-                    </label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder="Record at end of Week 2"
-                      value={editStockForm.weekTwoStock}
-                      onChange={(e) => {
-                        setEditStockForm(prev => ({ ...prev, weekTwoStock: e.target.value }));
-                        setEditStockErrors(prev => ({ ...prev, weekTwoStock: '' }));
-                      }}
-                      className={editStockErrors.weekTwoStock ? 'border-red-500' : ''}
-                    />
-                    {editStockErrors.weekTwoStock && (
-                      <p className="text-red-500 text-xs mt-1">{editStockErrors.weekTwoStock}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Week 3 Stock Count
-                    </label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder="Record at end of Week 3"
-                      value={editStockForm.weekThreeStock}
-                      onChange={(e) => {
-                        setEditStockForm(prev => ({ ...prev, weekThreeStock: e.target.value }));
-                        setEditStockErrors(prev => ({ ...prev, weekThreeStock: '' }));
-                      }}
-                      className={editStockErrors.weekThreeStock ? 'border-red-500' : ''}
-                    />
-                    {editStockErrors.weekThreeStock && (
-                      <p className="text-red-500 text-xs mt-1">{editStockErrors.weekThreeStock}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Week 4 Stock Count
-                    </label>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1"
-                      placeholder="Record at end of Week 4"
-                      value={editStockForm.weekFourStock}
-                      onChange={(e) => {
-                        setEditStockForm(prev => ({ ...prev, weekFourStock: e.target.value }));
-                        setEditStockErrors(prev => ({ ...prev, weekFourStock: '' }));
-                      }}
-                      className={editStockErrors.weekFourStock ? 'border-red-500' : ''}
-                    />
-                    {editStockErrors.weekFourStock && (
-                      <p className="text-red-500 text-xs mt-1">{editStockErrors.weekFourStock}</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {editStockErrors.general && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <p className="text-red-800 text-sm">{editStockErrors.general}</p>
-                </div>
-              )}
-
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setIsEditStockModalOpen(false);
-                    setEditStockForm({
-                      weekOneStock: '',
-                      weekTwoStock: '',
-                      weekThreeStock: '',
-                      weekFourStock: ''
-                    });
-                    setEditStockErrors({});
-                  }}
-                  disabled={isSubmittingEdit}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={async () => {
-                    // Validation
-                    const errors = {};
-                    
-                    if (editStockForm.weekOneStock && parseInt(editStockForm.weekOneStock) < 0) {
-                      errors.weekOneStock = 'Week 1 stock count must be 0 or greater';
-                    }
-                    
-                    if (editStockForm.weekTwoStock && parseInt(editStockForm.weekTwoStock) < 0) {
-                      errors.weekTwoStock = 'Week 2 stock count must be 0 or greater';
-                    }
-                    
-                    if (editStockForm.weekThreeStock && parseInt(editStockForm.weekThreeStock) < 0) {
-                      errors.weekThreeStock = 'Week 3 stock count must be 0 or greater';
-                    }
-                    
-                    if (editStockForm.weekFourStock && parseInt(editStockForm.weekFourStock) < 0) {
-                      errors.weekFourStock = 'Week 4 stock count must be 0 or greater';
-                    }
-                    
-                    if (Object.keys(errors).length > 0) {
-                      setEditStockErrors(errors);
-                      return;
-                    }
-                    
-                    try {
-                      setIsSubmittingEdit(true);
-                      setEditStockErrors({});
-                      
-                      const stockDocRef = doc(db, 'stocks', selectedStock.id);
-                      const updateData = {
-                        weekOneStock: editStockForm.weekOneStock ? parseInt(editStockForm.weekOneStock) : 0,
-                        weekTwoStock: editStockForm.weekTwoStock ? parseInt(editStockForm.weekTwoStock) : 0,
-                        weekThreeStock: editStockForm.weekThreeStock ? parseInt(editStockForm.weekThreeStock) : 0,
-                        weekFourStock: editStockForm.weekFourStock ? parseInt(editStockForm.weekFourStock) : 0,
-                        endStock: editStockForm.weekFourStock ? parseInt(editStockForm.weekFourStock) : (selectedStock.endStock || 0),
-                        updatedAt: serverTimestamp()
-                      };
-                      
-                      await updateDoc(stockDocRef, updateData);
-                      
-                      // Log activity
-                      await logActivity(
-                        'update',
-                        'stock',
-                        selectedStock.id,
-                        selectedStock.productName || 'Unknown Product',
-                        {
-                          before: {
-                            weekOneStock: selectedStock.weekOneStock || 0,
-                            weekTwoStock: selectedStock.weekTwoStock || 0,
-                            weekThreeStock: selectedStock.weekThreeStock || 0,
-                            weekFourStock: selectedStock.weekFourStock || 0
-                          },
-                          after: {
-                            weekOneStock: parseInt(editStockForm.weekOneStock) || 0,
-                            weekTwoStock: parseInt(editStockForm.weekTwoStock) || 0,
-                            weekThreeStock: parseInt(editStockForm.weekThreeStock) || 0,
-                            weekFourStock: parseInt(editStockForm.weekFourStock) || 0
-                          }
-                        },
-                        'Weekly stock update',
-                        `Updated weekly stock counts for ${selectedStock.productName || 'product'}`
-                      );
-                      
-                      setIsEditStockModalOpen(false);
-                      setIsDetailsModalOpen(false);
-                      setSelectedStock(null);
-                      
-                      // Reload data
-                      await reloadStocks();
-                      
-                      alert('Weekly stocks updated successfully!');
-                    } catch (error) {
-                      console.error('Error updating stock:', error);
-                      setEditStockErrors({ general: 'Failed to update weekly stocks. Please try again.' });
-                    } finally {
-                      setIsSubmittingEdit(false);
-                    }
-                  }}
-                  disabled={isSubmittingEdit}
-                >
-                  {isSubmittingEdit ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 animate-spin mr-2" />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Edit className="h-4 w-4 mr-2" />
-                      Update Weekly Stocks
-                    </>
-                  )}
-                </Button>
-              </div>
-            </div>
-          </Modal>
-        )}
 
         {/* Stock History Modal */}
         {isHistoryModalOpen && selectedProductId && (() => {
@@ -2773,35 +3227,63 @@ const Stocks = () => {
                           create: 'bg-green-100 text-green-800',
                           update: 'bg-blue-100 text-blue-800',
                           adjust: 'bg-orange-100 text-orange-800',
-                          delete: 'bg-red-100 text-red-800'
+                          delete: 'bg-red-100 text-red-800',
+                          transfer: 'bg-blue-100 text-blue-800',
+                          receive: 'bg-green-100 text-green-800'
                         };
                         const actionIcons = {
                           create: <Plus className="h-4 w-4" />,
                           update: <Edit className="h-4 w-4" />,
                           adjust: <AlertTriangle className="h-4 w-4" />,
-                          delete: <XCircle className="h-4 w-4" />
+                          delete: <XCircle className="h-4 w-4" />,
+                          transfer: <ArrowRightLeft className="h-4 w-4" />,
+                          receive: <Package className="h-4 w-4" />
                         };
+                        
+                        // Handle transfer logs
+                        const isTransfer = log.details?.type === 'stock_transfer' || log.details?.type === 'stock_received';
+                        const displayName = log.entityName || log.details?.productName || 'Stock';
+                        const displayReason = log.reason || log.details?.reason || '';
+                        const displayNotes = log.notes || log.details?.notes || '';
+                        const displayQuantity = log.details?.quantity;
+                        const displayUser = log.user || log.createdBy || 'System';
+                        
                         return (
                           <Card key={log.id} className="p-4">
                             <div className="flex items-start justify-between">
                               <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-2">
                                   <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${actionColors[log.action] || 'bg-gray-100 text-gray-800'}`}>
-                                    {actionIcons[log.action]}
-                                    {log.action.toUpperCase()}
+                                    {actionIcons[log.action] || <Activity className="h-4 w-4" />}
+                                    {log.action ? log.action.toUpperCase() : 'ACTIVITY'}
                                   </span>
                                   <span className="text-sm text-gray-600">
-                                    {format(log.timestamp || log.createdAt, 'MMM dd, yyyy HH:mm')}
+                                    {format(log.timestamp || log.createdAt || new Date(), 'MMM dd, yyyy HH:mm')}
                                   </span>
+                                  {isTransfer && (
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                                      {log.details?.type === 'stock_received' ? 'Received' : 'Transferred'}
+                                    </span>
+                                  )}
                                 </div>
-                                <p className="text-sm font-medium text-gray-900 mb-1">{log.entityName}</p>
-                                {log.reason && (
-                                  <p className="text-sm text-gray-700 mb-2">
-                                    <span className="font-medium">Reason:</span> {log.reason}
+                                <p className="text-sm font-medium text-gray-900 mb-1">{displayName}</p>
+                                {displayQuantity && (
+                                  <p className="text-sm text-gray-700 mb-1">
+                                    <span className="font-medium">Quantity:</span> {displayQuantity} units
                                   </p>
                                 )}
-                                {log.notes && (
-                                  <p className="text-sm text-gray-600 mb-2">{log.notes}</p>
+                                {displayReason && (
+                                  <p className="text-sm text-gray-700 mb-2">
+                                    <span className="font-medium">Reason:</span> {displayReason}
+                                  </p>
+                                )}
+                                {displayNotes && (
+                                  <p className="text-sm text-gray-600 mb-2">{displayNotes}</p>
+                                )}
+                                {log.details?.batchDeductions && log.details.batchDeductions.length > 0 && (
+                                  <p className="text-xs text-gray-500 mt-2">
+                                    <span className="font-medium">Batches:</span> {log.details.batchDeductions.map(b => b.batchNumber || b.batchId).join(', ')}
+                                  </p>
                                 )}
                                 {log.changes && Object.keys(log.changes).length > 0 && (
                                   <div className="mt-2 p-2 bg-gray-50 rounded text-xs">
@@ -2864,11 +3346,7 @@ const Stocks = () => {
                       productId: '',
                       beginningStock: '',
                       startPeriod: '',
-                      endPeriod: '',
-                      weekOneStock: '',
-                      weekTwoStock: '',
-                      weekThreeStock: '',
-                      weekFourStock: ''
+                      endPeriod: ''
                     });
                     setCreateStockErrors({});
                     setProductSearchTerm('');
@@ -3139,18 +3617,6 @@ const Stocks = () => {
                 )}
               </div>
 
-                {/* Weekly Stocks - Optional (Edit Later) */}
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <h4 className="text-base font-semibold text-gray-900 mb-2">Weekly Stock Recording</h4>
-                  <p className="text-sm text-yellow-800 mb-3">
-                    <strong>Note:</strong> Weekly stocks are optional when creating a new record. 
-                    You can edit this record later to record Week 1, Week 2, Week 3, and Week 4 counts as the month progresses.
-                    <br />
-                    <span className="text-xs">• Create record with beginning stock only</span>
-                    <br />
-                    <span className="text-xs">• Edit weekly as you record actual counts at end of each week</span>
-                  </p>
-                </div>
 
 
                 {/* Real-time Stock - Auto Calculated */}
@@ -3191,10 +3657,6 @@ const Stocks = () => {
                       <div>
                         <span className="text-blue-700">Beginning:</span>
                         <span className="font-semibold text-blue-900 ml-2">{createStockForm.beginningStock || 0} units</span>
-                      </div>
-                      <div>
-                        <span className="text-blue-700">Week 4 (Record Later):</span>
-                        <span className="font-semibold text-blue-900 ml-2">{createStockForm.weekFourStock || 'Not recorded'} {createStockForm.weekFourStock ? 'units' : ''}</span>
                       </div>
                       <div>
                         <span className="text-blue-700">Real-time (Auto):</span>
@@ -3271,23 +3733,6 @@ const Stocks = () => {
                           errors.beginningStock = 'Beginning stock must be 0 or greater';
                         }
                         
-                        // Weekly stocks are optional on create - can be filled in later via edit
-                        // Only validate if values are provided
-                        if (createStockForm.weekOneStock && parseInt(createStockForm.weekOneStock) < 0) {
-                          errors.weekOneStock = 'Week 1 stock count must be 0 or greater';
-                        }
-                        
-                        if (createStockForm.weekTwoStock && parseInt(createStockForm.weekTwoStock) < 0) {
-                          errors.weekTwoStock = 'Week 2 stock count must be 0 or greater';
-                        }
-                        
-                        if (createStockForm.weekThreeStock && parseInt(createStockForm.weekThreeStock) < 0) {
-                          errors.weekThreeStock = 'Week 3 stock count must be 0 or greater';
-                        }
-                        
-                        if (createStockForm.weekFourStock && parseInt(createStockForm.weekFourStock) < 0) {
-                          errors.weekFourStock = 'Week 4 stock count must be 0 or greater';
-                        }
                         
                         if (Object.keys(errors).length > 0) {
                           setCreateStockErrors(errors);
@@ -3302,16 +3747,6 @@ const Stocks = () => {
                           const selectedProductData = selectedProduct || products.find(p => p.id === createStockForm.productId);
                       const beginningStock = parseInt(createStockForm.beginningStock);
                       
-                      // Weekly stocks are optional on create - will be filled in via edit later
-                      // Use 0 or empty if not provided
-                      const weekOneStock = createStockForm.weekOneStock ? parseInt(createStockForm.weekOneStock) : 0;
-                      const weekTwoStock = createStockForm.weekTwoStock ? parseInt(createStockForm.weekTwoStock) : 0;
-                      const weekThreeStock = createStockForm.weekThreeStock ? parseInt(createStockForm.weekThreeStock) : 0;
-                      const weekFourStock = createStockForm.weekFourStock ? parseInt(createStockForm.weekFourStock) : 0;
-                      
-                      // End stock is the recorded Week 4 count (or 0 if not recorded yet)
-                      const endStock = weekFourStock || 0;
-                      
                       // Real-time stock is automatically calculated from:
                       // beginningStock + adjustments (from stockAdjustments) - sales (from product_transactions)
                       // When creating new record, it starts equal to beginningStock
@@ -3324,14 +3759,7 @@ const Stocks = () => {
                         branchId: userData?.branchId,
                         beginningStock: beginningStock,
                         startPeriod: createStockForm.startPeriod,
-                        weekTrackingMode: 'manual', // Manual recording of weekly counts
-                        weekOneStock: weekOneStock,
-                        weekTwoStock: weekTwoStock,
-                        weekThreeStock: weekThreeStock,
-                        weekFourStock: weekFourStock,
                         endPeriod: createStockForm.endPeriod,
-                        endStockMode: 'auto', // Always automatic
-                        endStock: endStock,
                         realTimeStock: realTimeStock, // Auto-calculated: beginningStock + adjustments - sales
                         createdAt: serverTimestamp(),
                         updatedAt: serverTimestamp(),
@@ -3350,12 +3778,7 @@ const Stocks = () => {
                         {
                           beginningStock,
                           startPeriod: createStockForm.startPeriod,
-                          endPeriod: createStockForm.endPeriod,
-                          weekOneStock,
-                          weekTwoStock,
-                          weekThreeStock,
-                          weekFourStock,
-                          endStock
+                          endPeriod: createStockForm.endPeriod
                         },
                         'Stock record creation',
                         `Created new stock record for ${selectedProductData?.name || 'product'}`
@@ -3366,11 +3789,7 @@ const Stocks = () => {
                         productId: '',
                         beginningStock: '',
                         startPeriod: '',
-                        endPeriod: '',
-                        weekOneStock: '',
-                        weekTwoStock: '',
-                        weekThreeStock: '',
-                        weekFourStock: ''
+                        endPeriod: ''
                       });
                       setProductSearchTerm('');
                       setSelectedProduct(null);
@@ -3601,13 +4020,16 @@ const Stocks = () => {
                       setIsSubmittingAdjust(true);
                       setForceAdjustErrors({});
                       
-                      const isValidCode = await verifyManagerCode(forceAdjustForm.managerCode, userData?.branchId);
+                      const verificationResult = await verifyManagerCode(forceAdjustForm.managerCode, userData?.branchId);
                       
-                      if (!isValidCode) {
-                        setForceAdjustErrors({ managerCode: 'Invalid manager authorization code. Please contact branch manager.' });
+                      if (!verificationResult.valid) {
+                        setForceAdjustErrors({ managerCode: 'Invalid branch manager role password. Please contact a branch manager.' });
                         setIsSubmittingAdjust(false);
                         return;
                       }
+                      
+                      const verifiedManagerId = verificationResult.managerId;
+                      const verifiedManagerName = verificationResult.managerName;
                       
                       // Get stock document reference
                       const stocksRef = collection(db, 'stocks');
@@ -3644,29 +4066,32 @@ const Stocks = () => {
                       const stockData = stockDoc.data();
                       const productName = stockData?.productName || 'Unknown Product';
                       
-                      // Log activity
-                      await logActivity(
-                        'adjust',
-                        'stock',
-                        forceAdjustForm.stockId,
-                        productName,
-                        {
-                          before: {
-                            realTimeStock: parseInt(forceAdjustForm.currentStock)
-                          },
-                          after: {
-                            realTimeStock: parseInt(forceAdjustForm.newStock)
-                          },
-                          adjustmentQuantity: parseInt(forceAdjustForm.adjustmentQuantity)
-                        },
-                        forceAdjustForm.reason,
-                        forceAdjustForm.notes || `Stock force adjustment: ${parseInt(forceAdjustForm.currentStock)} → ${parseInt(forceAdjustForm.newStock)}`
-                      );
+                      // Log activity with detailed information
+                      await activityServiceLogActivity({
+                        action: 'stock_force_adjustment',
+                        performedBy: userData?.uid,
+                        targetUser: null,
+                        branchId: userData?.branchId,
+                        details: {
+                          stockId: forceAdjustForm.stockId,
+                          productId: forceAdjustForm.productId,
+                          productName: productName,
+                          batchNumber: forceAdjustForm.batchNumber || 'N/A',
+                          previousStock: parseInt(forceAdjustForm.currentStock),
+                          newStock: parseInt(forceAdjustForm.newStock),
+                          adjustmentQuantity: parseInt(forceAdjustForm.adjustmentQuantity),
+                          reason: forceAdjustForm.reason,
+                          notes: forceAdjustForm.notes || '',
+                          authorizedBy: verifiedManagerId,
+                          authorizedByName: verifiedManagerName
+                        }
+                      });
                       
                       // Reset form and close modal
                       setForceAdjustForm({
                         productId: '',
                         stockId: '',
+                        batchNumber: '',
                         currentStock: '',
                         newStock: '',
                         adjustmentQuantity: '',
@@ -3781,18 +4206,283 @@ const Stocks = () => {
               </div>
 
               <div className="flex justify-end gap-3 pt-4">
-                <Button variant="outline" onClick={() => setFilters({
-                  branch: 'all',
-                  status: 'all',
-                  category: 'all',
-                  stockRange: { min: '', max: '' },
-                  lowStock: false,
-                  usageType: 'all'
-                })}>
-                  Reset
-                </Button>
                 <Button onClick={() => setIsFilterModalOpen(false)}>
                   Apply Filters
+                </Button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {/* Import Stocks Modal */}
+        {isImportModalOpen && (
+          <Modal
+            isOpen={isImportModalOpen}
+            onClose={() => {
+              setIsImportModalOpen(false);
+              setImportPassword('');
+              setImportPasswordError('');
+            }}
+            title="Import Stocks from Excel"
+            size="lg"
+          >
+            <div className="space-y-6">
+              {/* Password Input */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Branch Manager Password <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <Input
+                    type="password"
+                    placeholder="Enter branch manager password"
+                    value={importPassword}
+                    onChange={(e) => {
+                      setImportPassword(e.target.value);
+                      setImportPasswordError('');
+                    }}
+                    className={`w-full pl-10 pr-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+                      importPasswordError ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                    disabled={isVerifyingPassword}
+                  />
+                  <ShieldCheck className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Requires branch manager role password for authorization</p>
+                {importPasswordError && (
+                  <p className="text-red-500 text-xs mt-1">{importPasswordError}</p>
+                )}
+              </div>
+
+              {/* Import Template Info */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h3 className="font-semibold text-blue-900 mb-2">Import Template</h3>
+                <p className="text-sm text-blue-700 mb-3">
+                  Download the template file to see the required format. The import will override existing stock quantities for matching batch numbers.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    // Create Excel template
+                    const templateData = [
+                      {
+                        'Batch Number': 'PO-KYI-01-OTC-001',
+                        'Current Stock': '50',
+                        'Product Name': 'Sample Product',
+                        'Product ID': 'prod123'
+                      },
+                      {
+                        'Batch Number': 'PO-KYI-01-SUP-001',
+                        'Current Stock': '30',
+                        'Product Name': 'Sample Product',
+                        'Product ID': 'prod123'
+                      }
+                    ];
+                    exportToExcel(templateData, 'stocks_import_template', 'Template', [
+                      { key: 'Batch Number', label: 'Batch Number' },
+                      { key: 'Current Stock', label: 'Current Stock' },
+                      { key: 'Product Name', label: 'Product Name' },
+                      { key: 'Product ID', label: 'Product ID' }
+                    ]);
+                    toast.success('Template downloaded');
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Download Template
+                </Button>
+              </div>
+
+              {/* Required Columns */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2">Required Columns:</h4>
+                <div className="flex flex-wrap gap-2">
+                  {['Batch Number', 'Current Stock'].map((col, index) => (
+                    <span
+                      key={index}
+                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800"
+                    >
+                      {col} *
+                    </span>
+                  ))}
+                  {['Product Name', 'Product ID'].map((col, index) => (
+                    <span
+                      key={index}
+                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"
+                    >
+                      {col}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sample Data Preview */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2">Sample Data:</h4>
+                <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Batch Number</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Current Stock</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product Name</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product ID</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      <tr>
+                        <td className="px-3 py-2 text-sm text-gray-900">PO-KYI-01-OTC-001</td>
+                        <td className="px-3 py-2 text-sm text-gray-900">50</td>
+                        <td className="px-3 py-2 text-sm text-gray-900">Sample Product</td>
+                        <td className="px-3 py-2 text-sm text-gray-900">prod123</td>
+                      </tr>
+                      <tr>
+                        <td className="px-3 py-2 text-sm text-gray-900">PO-KYI-01-SUP-001</td>
+                        <td className="px-3 py-2 text-sm text-gray-900">30</td>
+                        <td className="px-3 py-2 text-sm text-gray-900">Sample Product</td>
+                        <td className="px-3 py-2 text-sm text-gray-900">prod123</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* File Upload */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Excel File (.xlsx, .xls, .csv)
+                </label>
+                <label className="flex items-center justify-center px-4 py-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-[#160B53] transition-colors cursor-pointer">
+                  <Upload className="h-5 w-5 text-gray-400 mr-2" />
+                  <span className="text-sm text-gray-600">
+                    Choose file or drag and drop
+                  </span>
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx,.xls"
+                    onChange={async (e) => {
+                      const file = e.target.files[0];
+                      if (!file) return;
+
+                      if (!importPassword) {
+                        setImportPasswordError('Please enter branch manager password first');
+                        return;
+                      }
+
+                      try {
+                        setIsVerifyingPassword(true);
+                        setImportPasswordError('');
+
+                        let importData = [];
+
+                        if (file.name.endsWith('.csv')) {
+                          const text = await file.text();
+                          const lines = text.split('\n').filter(line => line.trim());
+                          const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+                          
+                          for (let i = 1; i < lines.length; i++) {
+                            const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+                            if (values.length === headers.length && values.some(v => v)) {
+                              const row = {};
+                              headers.forEach((header, index) => {
+                                row[header] = values[index] || '';
+                              });
+                              importData.push(row);
+                            }
+                          }
+                        } else {
+                          // Parse Excel file
+                          const arrayBuffer = await file.arrayBuffer();
+                          const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                          const firstSheetName = workbook.SheetNames[0];
+                          const worksheet = workbook.Sheets[firstSheetName];
+                          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+                          
+                          if (jsonData.length === 0) {
+                            setImportPasswordError('Excel file is empty');
+                            setIsVerifyingPassword(false);
+                            return;
+                          }
+                          
+                          const headers = jsonData[0].map(h => String(h).trim());
+                          
+                          for (let i = 1; i < jsonData.length; i++) {
+                            const row = jsonData[i];
+                            if (!row || row.length === 0) continue;
+                            
+                            const rowData = {};
+                            headers.forEach((header, index) => {
+                              rowData[header] = row[index] !== undefined ? String(row[index]).trim() : '';
+                            });
+                            
+                            if (Object.values(rowData).some(v => v)) {
+                              importData.push(rowData);
+                            }
+                          }
+                        }
+
+                        if (importData.length === 0) {
+                          setImportPasswordError('No data found in file');
+                          setIsVerifyingPassword(false);
+                          return;
+                        }
+
+                        const result = await handleImportStocks(importData, importPassword);
+                        if (result.success) {
+                          toast.success(result.message || 'Stocks imported successfully');
+                          setIsImportModalOpen(false);
+                          setImportPassword('');
+                          if (result.errors && result.errors.length > 0) {
+                            console.warn('Import errors:', result.errors);
+                          }
+                        } else {
+                          setImportPasswordError(result.error || 'Import failed');
+                          toast.error(result.error || 'Import failed');
+                        }
+                      } catch (error) {
+                        console.error('Import error:', error);
+                        setImportPasswordError(error.message || 'Failed to import stocks');
+                        toast.error('Failed to import stocks');
+                      } finally {
+                        setIsVerifyingPassword(false);
+                      }
+                    }}
+                    className="hidden"
+                    disabled={isVerifyingPassword || !importPassword}
+                  />
+                </label>
+                {!importPassword && (
+                  <p className="text-xs text-yellow-600 mt-1">Please enter branch manager password before selecting file</p>
+                )}
+              </div>
+
+              {/* Warning */}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="flex items-start">
+                  <AlertTriangle className="h-5 w-5 text-yellow-600 mr-2 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-yellow-800">Important</p>
+                    <p className="text-sm text-yellow-700 mt-1">
+                      This import will <strong>override</strong> existing stock quantities for matching batch numbers. 
+                      Make sure your data is correct before importing.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsImportModalOpen(false);
+                    setImportPassword('');
+                    setImportPasswordError('');
+                  }}
+                  disabled={isVerifyingPassword}
+                >
+                  Cancel
                 </Button>
               </div>
             </div>

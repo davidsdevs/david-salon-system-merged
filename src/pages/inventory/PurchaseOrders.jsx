@@ -84,6 +84,10 @@ const PurchaseOrders = () => {
   const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false);
   const [deliveryExpirationDates, setDeliveryExpirationDates] = useState({}); // { productId: expirationDate }
   const [isMarkingDelivered, setIsMarkingDelivered] = useState(false);
+  const [isConfirmOrderModalOpen, setIsConfirmOrderModalOpen] = useState(false);
+  const [isHighStockWarningModalOpen, setIsHighStockWarningModalOpen] = useState(false);
+  const [pendingProduct, setPendingProduct] = useState(null); // Product waiting for confirmation
+  const [pendingCurrentStock, setPendingCurrentStock] = useState(0);
   
   // Big data optimizations
   const [productSearchTerm, setProductSearchTerm] = useState('');
@@ -362,8 +366,53 @@ const PurchaseOrders = () => {
     }
   };
 
+  // Add product to order after confirmation (used when high stock warning is confirmed)
+  const addProductToOrderConfirmed = (product, currentStock, defaultUsageType) => {
+    // Add new item - ensure all fields have values (no undefined)
+    // User can have same product with different usage types, but not same product+usageType combination
+    setOrderItems(prev => [...prev, {
+      productId: product.id || '',
+      productName: product.name || '',
+      quantity: 1,
+      unitPrice: product.unitCost || 0,
+      totalPrice: product.unitCost || 0,
+      category: product.category || null,
+      sku: product.sku || null,
+      currentStock: currentStock, // Store current stock for display
+      usageType: defaultUsageType, // Default to the usage type that doesn't exist yet
+      itemKey: `${product.id}_${Date.now()}_${Math.random()}` // Unique key for each item entry
+    }]);
+  };
+
   // Add product to order with stock validation
   const addProductToOrder = async (product) => {
+    // Check which usage types already exist for this product
+    const existingOtc = orderItems.find(
+      item => item.productId === product.id && item.usageType === 'otc'
+    );
+    const existingSalonUse = orderItems.find(
+      item => item.productId === product.id && item.usageType === 'salon-use'
+    );
+    
+    // If both usage types already exist, prevent adding
+    if (existingOtc && existingSalonUse) {
+      toast.error(
+        `${product.name} is already in the order with both OTC and Salon Use usage types. ` +
+        `You cannot add duplicate product+usage type combinations.`,
+        { duration: 5000 }
+      );
+      return; // Prevent adding duplicate
+    }
+    
+    // Determine default usage type: use the one that doesn't exist yet
+    let defaultUsageType = 'otc';
+    if (existingOtc && !existingSalonUse) {
+      defaultUsageType = 'salon-use'; // OTC exists, default to Salon Use
+    } else if (!existingOtc && existingSalonUse) {
+      defaultUsageType = 'otc'; // Salon Use exists, default to OTC
+    }
+    // If neither exists, default to 'otc'
+    
     // Check current stock before adding
     const currentStock = await getTotalCurrentStock(product.id);
     const REORDER_THRESHOLD = 5; // Only allow ordering if stock is 5 or less
@@ -374,37 +423,57 @@ const PurchaseOrders = () => {
         { duration: 4000 }
       );
       
-      const confirmOrder = window.confirm(
-        `⚠️ Warning: ${product.name} currently has ${currentStock} units in stock.\n\n` +
-        `Reorder Policy: You should only order when stock is ${REORDER_THRESHOLD} or less.\n\n` +
-        `Do you want to proceed anyway? (Not recommended)`
-      );
-      
-      if (!confirmOrder) {
-        return; // User cancelled
-      }
-      
-      toast('Ordering despite high stock level', { icon: '⚠️', duration: 3000 });
+      // Store product info and open warning modal
+      setPendingProduct(product);
+      setPendingCurrentStock(currentStock);
+      setIsHighStockWarningModalOpen(true);
+      return; // Wait for user confirmation
     } else if (currentStock > 0 && currentStock <= REORDER_THRESHOLD) {
       toast.success(`${product.name} has ${currentStock} units - Good time to reorder!`, { duration: 3000 });
     } else if (currentStock === 0) {
       toast.error(`${product.name} is out of stock - Order immediately!`, { duration: 4000 });
     }
     
-    // Always add as new item - user can have same product with different usage types
     // Add new item - ensure all fields have values (no undefined)
-    setOrderItems(prev => [...prev, {
-      productId: product.id || '',
-      productName: product.name || '',
-      quantity: 1,
-      unitPrice: product.unitCost || 0,
-      totalPrice: product.unitCost || 0,
-      category: product.category || null,
-      sku: product.sku || null,
-      currentStock: currentStock, // Store current stock for display
-      usageType: 'otc', // Default to OTC, can be changed to 'salon-use'
-      itemKey: `${product.id}_${Date.now()}_${Math.random()}` // Unique key for each item entry
-    }]);
+    // User can have same product with different usage types, but not same product+usageType combination
+    addProductToOrderConfirmed(product, currentStock, defaultUsageType);
+  };
+
+  // Handle high stock warning modal confirmation
+  const handleHighStockWarningConfirm = () => {
+    if (pendingProduct) {
+      const REORDER_THRESHOLD = 5;
+      toast('Ordering despite high stock level', { icon: '⚠️', duration: 3000 });
+      
+      // Determine default usage type
+      const existingOtc = orderItems.find(
+        item => item.productId === pendingProduct.id && item.usageType === 'otc'
+      );
+      const existingSalonUse = orderItems.find(
+        item => item.productId === pendingProduct.id && item.usageType === 'salon-use'
+      );
+      
+      let defaultUsageType = 'otc';
+      if (existingOtc && !existingSalonUse) {
+        defaultUsageType = 'salon-use';
+      } else if (!existingOtc && existingSalonUse) {
+        defaultUsageType = 'otc';
+      }
+      
+      addProductToOrderConfirmed(pendingProduct, pendingCurrentStock, defaultUsageType);
+    }
+    
+    // Close modal and reset
+    setIsHighStockWarningModalOpen(false);
+    setPendingProduct(null);
+    setPendingCurrentStock(0);
+  };
+
+  // Handle high stock warning modal cancellation
+  const handleHighStockWarningCancel = () => {
+    setIsHighStockWarningModalOpen(false);
+    setPendingProduct(null);
+    setPendingCurrentStock(0);
   };
 
   // Remove item from order (by unique itemKey)
@@ -439,6 +508,27 @@ const PurchaseOrders = () => {
 
   // Update item usage type (by unique itemKey)
   const updateItemUsageType = (itemKey, usageType) => {
+    // Find the item being updated
+    const itemToUpdate = orderItems.find(item => item.itemKey === itemKey);
+    if (!itemToUpdate) return;
+    
+    // Check if this product+usageType combination already exists in another item
+    const existingItem = orderItems.find(
+      item => item.itemKey !== itemKey && 
+              item.productId === itemToUpdate.productId && 
+              item.usageType === usageType
+    );
+    
+    if (existingItem) {
+      toast.error(
+        `${itemToUpdate.productName} with ${usageType === 'otc' ? 'OTC' : 'Salon Use'} usage type is already in the order. ` +
+        `You cannot have duplicate product+usage type combinations.`,
+        { duration: 5000 }
+      );
+      return; // Prevent the change
+    }
+    
+    // Update the usage type if no duplicate exists
     setOrderItems(prev => prev.map(item =>
       item.itemKey === itemKey
         ? { ...item, usageType: usageType }
@@ -1247,12 +1337,12 @@ const PurchaseOrders = () => {
           </div>
         </Card>
 
-        {/* Create Order Modal - Full Page */}
+        {/* Create Order Modal - Centered */}
         {isCreateModalOpen && (
-          <div className="fixed inset-0 z-50 bg-white overflow-hidden">
-            <div className="h-full w-full flex flex-col">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col transform transition-all duration-300 scale-100">
               {/* Modal Header */}
-              <div className="bg-gradient-to-r from-[#160B53] to-[#12094A] text-white p-6">
+              <div className="bg-gradient-to-r from-[#160B53] to-[#12094A] text-white p-6 flex-shrink-0">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className="p-2 bg-white/20 rounded-lg">
@@ -1283,8 +1373,8 @@ const PurchaseOrders = () => {
                 </div>
               </div>
 
-              {/* Modal Content - Full Height */}
-              <div className="flex-1 overflow-hidden flex flex-col p-6">
+              {/* Modal Content - Scrollable */}
+              <div className="flex-1 overflow-y-auto flex flex-col p-6">
                 {/* Error Display in Modal */}
                 {error && (
                   <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 flex-shrink-0">
@@ -1353,10 +1443,10 @@ const PurchaseOrders = () => {
                     )}
                   </div>
                 ) : (
-                  /* Step 2: Product Selection */
-                  <form id="purchase-order-form" onSubmit={handleSubmitOrder} className="flex-1 flex flex-col min-h-0 space-y-6">
+                  /* Step 2: Product Selection with Sidebar Layout */
+                  <form id="purchase-order-form" onSubmit={handleSubmitOrder} className="flex-1 flex flex-col min-h-0">
                     {/* Supplier Info */}
-                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg flex-shrink-0">
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg flex-shrink-0 mb-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-3">
                           <Building className="h-5 w-5 text-blue-600" />
@@ -1382,40 +1472,42 @@ const PurchaseOrders = () => {
                       </div>
                     </div>
 
-                    {/* Available Products Grid with Images - Big Data Optimized */}
-                    <div className="flex-1 flex flex-col min-h-0">
-                      <div className="mb-4 flex items-center justify-between flex-shrink-0">
-                        <h3 className="text-lg font-semibold text-gray-900">
-                          Available Products ({filteredAndPaginatedProducts.total || supplierProducts.length})
-                        </h3>
-                        {/* Product Search */}
-                        <div className="relative w-64">
-                          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                          <Input
-                            type="text"
-                            placeholder="Search products..."
-                            value={productSearchTerm}
-                            onChange={(e) => {
-                              setProductSearchTerm(e.target.value);
-                              setCurrentProductPage(1); // Reset to first page on search
-                            }}
-                            className="w-full pl-10"
-                          />
-                        </div>
-                      </div>
-                      
-                      {supplierProducts.length === 0 ? (
-                        <div className="text-center py-12 bg-gray-50 rounded-lg flex-1 flex items-center justify-center">
-                          <div>
-                            <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                            <p className="text-gray-600 text-lg">No products available from this supplier in your branch.</p>
+                    {/* Two Column Layout: Products Left, Order Items Right */}
+                    <div className="flex-1 flex gap-4 min-h-0">
+                      {/* Left Column: Product Selection */}
+                      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+                        <div className="mb-4 flex items-center justify-between flex-shrink-0">
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            Available Products ({filteredAndPaginatedProducts.total || supplierProducts.length})
+                          </h3>
+                          {/* Product Search */}
+                          <div className="relative w-64">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input
+                              type="text"
+                              placeholder="Search products..."
+                              value={productSearchTerm}
+                              onChange={(e) => {
+                                setProductSearchTerm(e.target.value);
+                                setCurrentProductPage(1); // Reset to first page on search
+                              }}
+                              className="w-full pl-10"
+                            />
                           </div>
                         </div>
-                      ) : (
-                        <>
-                          {/* Products Grid with Images */}
-                          <div className="flex-1 overflow-y-auto">
-                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-2">
+                      
+                        {supplierProducts.length === 0 ? (
+                          <div className="text-center py-12 bg-gray-50 rounded-lg flex-1 flex items-center justify-center">
+                            <div>
+                              <Package className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                              <p className="text-gray-600 text-lg">No products available from this supplier in your branch.</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {/* Products Grid with Images */}
+                            <div className="flex-1 overflow-y-auto">
+                              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-2">
                               {filteredAndPaginatedProducts.products?.map((product) => {
                                 const isInOrder = orderItems.some(item => item.productId === product.id);
                                 return (
@@ -1520,127 +1612,187 @@ const PurchaseOrders = () => {
                                 </Button>
                               </div>
                             </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Right Column: Order Items Sidebar */}
+                      <div className="w-96 flex-shrink-0 flex flex-col border-l border-gray-200 pl-4">
+                        <div className="flex items-center justify-between mb-4 flex-shrink-0">
+                          <h3 className="text-lg font-semibold text-gray-900">
+                            Order Items {orderItems.length > 0 && <span className="text-sm font-normal text-gray-500">({orderItems.length})</span>}
+                          </h3>
+                          {orderItems.length > 0 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                if (window.confirm('Are you sure you want to clear all order items?')) {
+                                  setOrderItems([]);
+                                }
+                              }}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50 text-xs"
+                            >
+                              Clear All
+                            </Button>
                           )}
-                        </>
-                      )}
+                        </div>
+
+                        {orderItems.length === 0 ? (
+                          <div className="flex-1 flex items-center justify-center bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
+                            <div className="text-center p-6">
+                              <ShoppingCart className="h-12 w-12 text-gray-400 mx-auto mb-3" />
+                              <p className="text-sm text-gray-600">No items in order</p>
+                              <p className="text-xs text-gray-500 mt-1">Click products to add them</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex-1 flex flex-col min-h-0">
+                            {/* Scrollable Order Items List */}
+                            <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+                              {orderItems.map((item) => {
+                                const product = supplierProducts.find(p => p.id === item.productId);
+                                return (
+                                  <Card key={item.itemKey || item.productId} className="p-3">
+                                    <div className="space-y-3">
+                                      {/* Product Header */}
+                                      <div className="flex items-start gap-3">
+                                        {/* Product Image */}
+                                        <div className="flex-shrink-0 w-12 h-12 bg-gray-100 rounded-lg overflow-hidden">
+                                          {product?.imageUrl ? (
+                                            <img
+                                              src={product.imageUrl}
+                                              alt={item.productName}
+                                              className="w-full h-full object-cover"
+                                              onError={(e) => {
+                                                e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="48" height="48"%3E%3Crect fill="%23e5e7eb" width="48" height="48"/%3E%3Ctext fill="%239ca3af" x="50%25" y="50%25" text-anchor="middle" dy=".3em" font-size="8"%3ENo Image%3C/text%3E%3C/svg%3E';
+                                              }}
+                                            />
+                                          ) : (
+                                            <div className="w-full h-full flex items-center justify-center">
+                                              <Package className="h-5 w-5 text-gray-400" />
+                                            </div>
+                                          )}
+                                        </div>
+                                        
+                                        <div className="flex-1 min-w-0">
+                                          <h4 className="font-semibold text-gray-900 text-sm truncate">{item.productName}</h4>
+                                          {item.sku && (
+                                            <p className="text-xs text-gray-500">SKU: {item.sku}</p>
+                                          )}
+                                          {/* Show usage type badge */}
+                                          <div className="mt-1">
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                                              (item.usageType || 'otc') === 'salon-use'
+                                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                                : 'bg-green-100 text-green-800 border border-green-200'
+                                            }`}>
+                                              {(item.usageType || 'otc') === 'salon-use' ? 'Salon Use' : 'OTC'}
+                                            </span>
+                                          </div>
+                                        </div>
+                                        
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => removeOrderItem(item.itemKey || item.productId)}
+                                          className="text-red-600 hover:text-red-700 hover:bg-red-50 flex-shrink-0 p-1"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      </div>
+
+                                      {/* Stock Info */}
+                                      {item.currentStock !== undefined && (
+                                        <p className={`text-xs ${
+                                          item.currentStock > 5 
+                                            ? 'text-orange-600 font-medium' 
+                                            : item.currentStock === 0 
+                                            ? 'text-red-600 font-medium' 
+                                            : 'text-green-600'
+                                        }`}>
+                                          Stock: {item.currentStock} units
+                                          {item.currentStock > 5 && ' (High)'}
+                                        </p>
+                                      )}
+
+                                      {/* Quantity and Usage Controls */}
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                          <label className="text-xs text-gray-600 mb-1 block">Quantity</label>
+                                          <Input
+                                            type="number"
+                                            min="1"
+                                            value={item.quantity}
+                                            onChange={(e) => updateItemQuantity(item.itemKey || item.productId, e.target.value)}
+                                            className="w-full text-sm"
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="text-xs text-gray-600 mb-1 block">Usage</label>
+                                          <select
+                                            value={item.usageType || 'otc'}
+                                            onChange={(e) => updateItemUsageType(item.itemKey || item.productId, e.target.value)}
+                                            className="w-full px-2 py-1.5 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53]"
+                                          >
+                                            <option 
+                                              value="otc"
+                                              disabled={orderItems.some(
+                                                otherItem => otherItem.itemKey !== item.itemKey && 
+                                                             otherItem.productId === item.productId && 
+                                                             otherItem.usageType === 'otc'
+                                              )}
+                                            >
+                                              OTC
+                                            </option>
+                                            <option 
+                                              value="salon-use"
+                                              disabled={orderItems.some(
+                                                otherItem => otherItem.itemKey !== item.itemKey && 
+                                                             otherItem.productId === item.productId && 
+                                                             otherItem.usageType === 'salon-use'
+                                              )}
+                                            >
+                                              Salon Use
+                                            </option>
+                                          </select>
+                                        </div>
+                                      </div>
+
+                                      {/* Price Info */}
+                                      <div className="flex items-center justify-between pt-2 border-t border-gray-200">
+                                        <div>
+                                          <p className="text-xs text-gray-500">Unit Price</p>
+                                          <p className="text-sm font-semibold text-gray-900">₱{item.unitPrice.toLocaleString()}</p>
+                                        </div>
+                                        <div className="text-right">
+                                          <p className="text-xs text-gray-500">Total</p>
+                                          <p className="text-sm font-bold text-[#160B53]">₱{item.totalPrice.toLocaleString()}</p>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </Card>
+                                );
+                              })}
+                            </div>
+
+                            {/* Total Amount - Sticky at bottom */}
+                            <div className="mt-4 p-4 bg-gradient-to-r from-[#160B53] to-[#12094A] rounded-lg flex-shrink-0">
+                              <div className="flex justify-between items-center">
+                                <span className="text-white font-semibold">Total Amount:</span>
+                                <span className="text-2xl font-bold text-white">₱{orderTotal.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    {/* Order Items with Images */}
-                    {orderItems.length > 0 && (
-                      <div className="border-t border-gray-200 pt-6 mt-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Order Items ({orderItems.length})</h3>
-                        <div className="space-y-3 max-h-64 overflow-y-auto">
-                          {orderItems.map((item) => {
-                            const product = supplierProducts.find(p => p.id === item.productId);
-                            return (
-                              <Card key={item.productId} className="p-4">
-                                <div className="flex items-center gap-4">
-                                  {/* Product Image */}
-                                  <div className="flex-shrink-0 w-16 h-16 bg-gray-100 rounded-lg overflow-hidden">
-                                    {product?.imageUrl ? (
-                                      <img
-                                        src={product.imageUrl}
-                                        alt={item.productName}
-                                        className="w-full h-full object-cover"
-                                        onError={(e) => {
-                                          e.target.src = 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="64" height="64"%3E%3Crect fill="%23e5e7eb" width="64" height="64"/%3E%3Ctext fill="%239ca3af" x="50%25" y="50%25" text-anchor="middle" dy=".3em" font-size="10"%3ENo Image%3C/text%3E%3C/svg%3E';
-                                        }}
-                                      />
-                                    ) : (
-                                      <div className="w-full h-full flex items-center justify-center">
-                                        <Package className="h-6 w-6 text-gray-400" />
-                                      </div>
-                                    )}
-                                  </div>
-                                  
-                                  <div className="flex-1 min-w-0">
-                                    <h4 className="font-semibold text-gray-900 truncate">{item.productName}</h4>
-                                    {item.sku && (
-                                      <p className="text-xs text-gray-500">SKU: {item.sku}</p>
-                                    )}
-                                    {item.currentStock !== undefined && (
-                                      <p className={`text-xs mt-1 ${
-                                        item.currentStock > 5 
-                                          ? 'text-orange-600 font-medium' 
-                                          : item.currentStock === 0 
-                                          ? 'text-red-600 font-medium' 
-                                          : 'text-green-600'
-                                      }`}>
-                                        Current Stock: {item.currentStock} units
-                                        {item.currentStock > 5 && ' (High stock - ordering not recommended)'}
-                                      </p>
-                                    )}
-                                    {/* Show usage type badge */}
-                                    <div className="mt-1">
-                                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
-                                        (item.usageType || 'otc') === 'salon-use'
-                                          ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                                          : 'bg-green-100 text-green-800 border border-green-200'
-                                      }`}>
-                                        {(item.usageType || 'otc') === 'salon-use' ? 'Salon Use' : 'OTC'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                  
-                                  <div className="flex items-center gap-4">
-                                    <div className="flex items-center gap-2">
-                                      <label className="text-sm text-gray-600 whitespace-nowrap">Qty:</label>
-                                      <Input
-                                        type="number"
-                                        min="1"
-                                        value={item.quantity}
-                                        onChange={(e) => updateItemQuantity(item.itemKey || item.productId, e.target.value)}
-                                        className="w-20"
-                                      />
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <label className="text-sm text-gray-600 whitespace-nowrap">Usage:</label>
-                                      <select
-                                        value={item.usageType || 'otc'}
-                                        onChange={(e) => updateItemUsageType(item.itemKey || item.productId, e.target.value)}
-                                        className="w-32 px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53]"
-                                      >
-                                        <option value="otc">OTC</option>
-                                        <option value="salon-use">Salon Use</option>
-                                      </select>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <label className="text-sm text-gray-600 whitespace-nowrap">Unit Price:</label>
-                                      <div className="w-32 px-3 py-2 bg-gray-50 border border-gray-200 rounded-md text-sm font-semibold text-gray-900">
-                                        ₱{item.unitPrice.toLocaleString()}
-                                      </div>
-                                    </div>
-                                    <div className="text-right min-w-[100px]">
-                                      <p className="text-sm font-semibold text-gray-900">
-                                        ₱{item.totalPrice.toLocaleString()}
-                                      </p>
-                                    </div>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => removeOrderItem(item.itemKey || item.productId)}
-                                      className="text-red-600 hover:text-red-700 hover:bg-red-50 flex-shrink-0"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              </Card>
-                            );
-                          })}
-                        </div>
-                        <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                          <div className="flex justify-between items-center">
-                            <span className="text-lg font-semibold text-gray-900">Total Amount:</span>
-                            <span className="text-2xl font-bold text-[#160B53]">₱{orderTotal.toLocaleString()}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Order Details */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-shrink-0">
+                    {/* Order Details - Below both columns */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-shrink-0 mt-4 pt-4 border-t border-gray-200">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Order Date *</label>
                         <Input
@@ -1697,22 +1849,31 @@ const PurchaseOrders = () => {
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
-                        handleSubmitOrder();
+                        // Validate before opening confirmation modal
+                        if (!selectedSupplierId) {
+                          setError('Please select a supplier');
+                          return;
+                        }
+                        if (orderItems.length === 0) {
+                          setError('Please add at least one product to the order');
+                          return;
+                        }
+                        if (!orderFormData.orderDate) {
+                          setError('Please select an order date');
+                          return;
+                        }
+                        if (!orderFormData.expectedDelivery) {
+                          setError('Please select an expected delivery date');
+                          return;
+                        }
+                        setError(null);
+                        setIsConfirmOrderModalOpen(true);
                       }}
                       disabled={isSubmitting || orderItems.length === 0 || !orderFormData.orderDate || !orderFormData.expectedDelivery}
                       className="bg-[#160B53] text-white hover:bg-[#12094A] transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {isSubmitting ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Creating Order...
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle className="h-4 w-4" />
-                          Create Order
-                        </>
-                      )}
+                      <CheckCircle className="h-4 w-4" />
+                      Create Order
                     </Button>
                   )}
                 </div>
@@ -2039,6 +2200,257 @@ const PurchaseOrders = () => {
                         Confirm Delivery
                       </>
                     )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirm Order Modal */}
+        {isConfirmOrderModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl transform transition-all duration-300 scale-100">
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-[#160B53] to-[#12094A] text-white p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="p-2 bg-white/20 rounded-lg">
+                      <AlertTriangle className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-bold">Confirm Purchase Order</h2>
+                      <p className="text-white/80 text-sm mt-1">Please review your order before submitting</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setIsConfirmOrderModalOpen(false)}
+                    className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
+                  >
+                    <X className="h-5 w-5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6">
+                <div className="space-y-4">
+                  {/* Order Summary */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <h3 className="font-semibold text-gray-900 mb-3">Order Summary</h3>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Supplier:</span>
+                        <span className="font-medium text-gray-900">{selectedSupplierName || 'Unknown'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Order Date:</span>
+                        <span className="font-medium text-gray-900">
+                          {orderFormData.orderDate ? format(new Date(orderFormData.orderDate), 'MMM dd, yyyy') : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Expected Delivery:</span>
+                        <span className="font-medium text-gray-900">
+                          {orderFormData.expectedDelivery ? format(new Date(orderFormData.expectedDelivery), 'MMM dd, yyyy') : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Number of Items:</span>
+                        <span className="font-medium text-gray-900">{orderItems.length}</span>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t border-gray-300">
+                        <span className="font-semibold text-gray-900">Total Amount:</span>
+                        <span className="text-lg font-bold text-[#160B53]">₱{orderTotal.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Order Items */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <h3 className="font-semibold text-gray-900 mb-3">Order Items</h3>
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {orderItems.map((item, index) => (
+                        <div key={index} className="flex justify-between items-center text-sm bg-white p-2 rounded">
+                          <div className="flex-1">
+                            <p className="font-medium text-gray-900">{item.productName}</p>
+                            <p className="text-xs text-gray-500">
+                              {item.quantity} × ₱{item.unitPrice.toLocaleString()} 
+                              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                item.usageType === 'salon-use' 
+                                  ? 'bg-blue-100 text-blue-800' 
+                                  : 'bg-green-100 text-green-800'
+                              }`}>
+                                {item.usageType === 'salon-use' ? 'Salon Use' : 'OTC'}
+                              </span>
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-medium text-gray-900">₱{item.totalPrice.toLocaleString()}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  {orderFormData.notes && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <p className="text-sm font-semibold text-blue-900 mb-1">Notes:</p>
+                      <p className="text-sm text-blue-700">{orderFormData.notes}</p>
+                    </div>
+                  )}
+
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <p className="text-sm text-gray-700">
+                      <strong>Are you sure you want to create this purchase order?</strong> This action will:
+                    </p>
+                    <ul className="list-disc list-inside text-sm text-gray-600 mt-2 space-y-1">
+                      <li>Create a new purchase order with status "Pending"</li>
+                      <li>Submit it for approval by the Overall Inventory Controller</li>
+                      <li>Reset the current form</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="border-t border-gray-200 p-6 bg-gray-50">
+                <div className="flex justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsConfirmOrderModalOpen(false)}
+                    disabled={isSubmitting}
+                    className="border-gray-300 text-gray-700 hover:bg-gray-100"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      setIsConfirmOrderModalOpen(false);
+                      await handleSubmitOrder();
+                    }}
+                    disabled={isSubmitting}
+                    className="bg-[#160B53] text-white hover:bg-[#12094A] transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Creating Order...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="h-4 w-4" />
+                        Confirm & Create Order
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* High Stock Warning Modal */}
+        {isHighStockWarningModalOpen && pendingProduct && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl transform transition-all duration-300 scale-100">
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="p-2 bg-white/20 rounded-lg">
+                      <AlertTriangle className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-bold">High Stock Warning</h2>
+                      <p className="text-white/90 text-sm mt-1">Reorder policy violation</p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    onClick={handleHighStockWarningCancel}
+                    className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
+                  >
+                    <X className="h-5 w-5" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6">
+                <div className="space-y-4">
+                  {/* Warning Message */}
+                  <div className="bg-orange-50 border-2 border-orange-200 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-6 w-6 text-orange-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-orange-900 mb-2">
+                          {pendingProduct.name} currently has {pendingCurrentStock} units in stock
+                        </h3>
+                        <p className="text-sm text-orange-800">
+                          The reorder policy states that you should only order when stock is 5 units or less.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Product Details */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <h3 className="font-semibold text-gray-900 mb-3">Product Information</h3>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Product Name:</span>
+                        <span className="font-medium text-gray-900">{pendingProduct.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Current Stock:</span>
+                        <span className="font-bold text-orange-600">{pendingCurrentStock} units</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Reorder Threshold:</span>
+                        <span className="font-medium text-gray-900">5 units or less</span>
+                      </div>
+                      <div className="flex justify-between pt-2 border-t border-gray-300">
+                        <span className="text-gray-600">Status:</span>
+                        <span className="font-semibold text-orange-600">Stock Level Too High</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recommendation */}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <p className="text-sm text-blue-900">
+                      <strong>Recommendation:</strong> It is not recommended to order this product at this time. 
+                      Consider waiting until the stock level drops to 5 units or less before placing an order.
+                    </p>
+                  </div>
+
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <p className="text-sm text-gray-700">
+                      <strong>Do you want to proceed anyway?</strong> This action will add the product to your order despite the high stock level.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="border-t border-gray-200 p-6 bg-gray-50">
+                <div className="flex justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={handleHighStockWarningCancel}
+                    className="border-gray-300 text-gray-700 hover:bg-gray-100"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleHighStockWarningConfirm}
+                    className="bg-orange-500 text-white hover:bg-orange-600 transition-colors flex items-center gap-2"
+                  >
+                    <AlertTriangle className="h-4 w-4" />
+                    Proceed Anyway (Not Recommended)
                   </Button>
                 </div>
               </div>

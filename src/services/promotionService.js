@@ -36,7 +36,8 @@ export const createPromotion = async (promotionData, currentUser) => {
     const promotionsRef = collection(db, PROMOTIONS_COLLECTION);
     
     const promotion = {
-      name: promotionData.name,
+      title: promotionData.title || promotionData.name || '', // Support both title and name for compatibility
+      name: promotionData.title || promotionData.name || '', // Keep name for backward compatibility
       description: promotionData.description || '',
       promotionCode: promotionData.promotionCode || '',
       type: promotionData.type || 'discount', // 'discount', 'points', 'free_service'
@@ -74,7 +75,7 @@ export const createPromotion = async (promotionData, currentUser) => {
       action: 'CREATE_PROMOTION',
       targetType: 'promotion',
       targetId: docRef.id,
-      details: `Created promotion: ${promotion.name}`,
+      details: `Created promotion: ${promotion.title || promotion.name}`,
       metadata: { 
         branchId: promotionData.branchId,
         type: promotion.type,

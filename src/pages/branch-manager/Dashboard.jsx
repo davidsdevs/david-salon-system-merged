@@ -30,6 +30,14 @@ const BranchManagerDashboard = () => {
   const [upcomingAppointments, setUpcomingAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Set page title with role prefix
+  useEffect(() => {
+    document.title = 'Branch Manager - Dashboard | DSMS';
+    return () => {
+      document.title = 'DSMS - David\'s Salon Management System';
+    };
+  }, []);
+
   useEffect(() => {
     if (userBranch) {
       fetchDashboardData();

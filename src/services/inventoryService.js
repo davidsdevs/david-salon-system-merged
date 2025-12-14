@@ -500,13 +500,37 @@ class InventoryService {
         return { success: false, message: 'Invalid delivery data: items array required' };
       }
 
+      // Group items by productId to ensure same products get same batch number
+      const productBatchMap = {}; // Track batch number per product
+      let batchSequence = 0;
+
       for (const item of deliveryData.items) {
         if (!item.productId || !item.quantity || item.quantity <= 0) {
           continue; // Skip invalid items
         }
 
-        // Generate batch number: PO-YYYY-XXXX-BATCH-XX
-        const batchNumber = `${deliveryData.purchaseOrderId || 'PO'}-BATCH-${String(batches.length + 1).padStart(3, '0')}`;
+        // Get or assign batch number for this product
+        // Same product gets same batch number regardless of usage type
+        if (!productBatchMap[item.productId]) {
+          batchSequence++;
+          productBatchMap[item.productId] = batchSequence;
+        }
+        
+        const baseBatchNumber = productBatchMap[item.productId];
+        const usageType = String(item.usageType || 'otc').toLowerCase();
+        const poId = deliveryData.purchaseOrderId || 'PO';
+        const formattedBatchNum = String(baseBatchNumber).padStart(3, '0');
+        
+        // Format batch number based on usage type
+        // OTC: PO-{PO_ID}-OTC-{BATCH_NUM} (e.g., PO-KYI-01-OTC-001)
+        // Salon Use: PO-{PO_ID}-SUP-{BATCH_NUM} (e.g., PO-KYI-01-SUP-001)
+        // Both share the same batch number sequence to indicate they came from the same delivery
+        let batchNumber;
+        if (usageType === 'salon-use') {
+          batchNumber = `${poId}-SUP-${formattedBatchNum}`;
+        } else {
+          batchNumber = `${poId}-OTC-${formattedBatchNum}`;
+        }
         
         const batchRef = doc(collection(db, this.productBatchesCollection));
         const expirationDate = item.expirationDate ? Timestamp.fromDate(new Date(item.expirationDate)) : null;
@@ -514,6 +538,7 @@ class InventoryService {
 
         const batchData = {
           batchNumber: batchNumber,
+          baseBatchNumber: baseBatchNumber, // Store the base number (001, 002, etc.) for linking
           productId: String(item.productId),
           productName: String(item.productName || ''),
           branchId: String(deliveryData.branchId),
@@ -534,35 +559,20 @@ class InventoryService {
         batches.push({ id: batchRef.id, ...batchData });
 
         // Create batch_stock entry in stocks collection for FIFO tracking
-        // This allows weekly REALCOUNTSTOCK tracking per batch
         const batchStockRef = doc(collection(db, 'stocks'));
         const batchQuantity = Number(item.quantity);
-        const currentDate = new Date();
-        const startPeriod = Timestamp.fromDate(currentDate);
-        
-        // Calculate end period (4 weeks from now for monthly tracking)
-        const endPeriodDate = new Date(currentDate);
-        endPeriodDate.setDate(endPeriodDate.getDate() + 28); // 4 weeks
-        const endPeriod = Timestamp.fromDate(endPeriodDate);
 
         const batchStockData = {
           batchId: batchRef.id, // Reference to the product_batch
           batchNumber: batchNumber, // For easy reference
+          baseBatchNumber: baseBatchNumber, // Store the base number for linking
           productId: String(item.productId),
           productName: String(item.productName || ''),
           branchId: String(deliveryData.branchId),
           purchaseOrderId: String(deliveryData.purchaseOrderId || ''),
           beginningStock: batchQuantity, // Initial quantity from this batch
-          startPeriod: startPeriod,
-          weekTrackingMode: 'manual', // Manual recording of weekly counts
-          weekOneStock: 0, // Will be recorded weekly
-          weekTwoStock: 0,
-          weekThreeStock: 0,
-          weekFourStock: 0,
-          endPeriod: endPeriod,
-          endStockMode: 'auto', // Always automatic
-          endStock: 0, // Will be calculated
           realTimeStock: batchQuantity, // Starts equal to beginningStock, will be updated as stock is used
+          remainingQuantity: batchQuantity, // Track remaining stock in this batch
           expirationDate: expirationDate, // Link to batch expiration
           receivedDate: receivedDate, // When batch was received
           receivedBy: String(deliveryData.receivedBy || ''),
@@ -627,16 +637,25 @@ class InventoryService {
         });
       });
 
-      // Sort by expiration date (FIFO - oldest first) and received date
+      // Sort by received date first (FIFO - oldest batches first), then by expiration date
+      // This ensures Batch-001 is deducted before Batch-002, etc.
       batches.sort((a, b) => {
-        // First sort by expiration date (if available)
+        // First sort by received date (oldest first) - this is the primary FIFO criterion
+        const receivedDiff = a.receivedDate.getTime() - b.receivedDate.getTime();
+        if (receivedDiff !== 0) {
+          return receivedDiff;
+        }
+        // If received dates are the same, sort by expiration date (oldest first)
         if (a.expirationDate && b.expirationDate) {
           return a.expirationDate.getTime() - b.expirationDate.getTime();
         }
         if (a.expirationDate) return -1;
         if (b.expirationDate) return 1;
-        // Then by received date (oldest first)
-        return a.receivedDate.getTime() - b.receivedDate.getTime();
+        // Finally, sort by batch number if available (for consistent ordering)
+        if (a.batchNumber && b.batchNumber) {
+          return a.batchNumber.localeCompare(b.batchNumber);
+        }
+        return 0;
       });
 
       return { success: true, batches };
@@ -683,14 +702,24 @@ class InventoryService {
         });
       });
 
-      // Sort by expiration date (oldest first)
+      // Sort by received date first (FIFO - oldest batches first), then by expiration date
       batches.sort((a, b) => {
+        // First sort by received date (oldest first) - primary FIFO criterion
+        const receivedDiff = a.receivedDate.getTime() - b.receivedDate.getTime();
+        if (receivedDiff !== 0) {
+          return receivedDiff;
+        }
+        // If received dates are the same, sort by expiration date (oldest first)
         if (a.expirationDate && b.expirationDate) {
           return a.expirationDate.getTime() - b.expirationDate.getTime();
         }
         if (a.expirationDate) return -1;
         if (b.expirationDate) return 1;
-        return a.receivedDate.getTime() - b.receivedDate.getTime();
+        // Finally, sort by batch number if available
+        if (a.batchNumber && b.batchNumber) {
+          return a.batchNumber.localeCompare(b.batchNumber);
+        }
+        return 0;
       });
 
       return { success: true, batches };
@@ -885,14 +914,22 @@ class InventoryService {
                            doc.data().receivedDate ? new Date(doc.data().receivedDate) : new Date(),
             }))
             .sort((a, b) => {
-              // Sort by expiration date (FIFO)
+              // Sort by received date first (FIFO - oldest batches first)
+              const receivedDiff = a.receivedDate.getTime() - b.receivedDate.getTime();
+              if (receivedDiff !== 0) {
+                return receivedDiff;
+              }
+              // If received dates are the same, sort by expiration date (oldest first)
               if (a.expirationDate && b.expirationDate) {
                 return a.expirationDate.getTime() - b.expirationDate.getTime();
               }
               if (a.expirationDate) return -1;
               if (b.expirationDate) return 1;
-              // Then by received date
-              return a.receivedDate.getTime() - b.receivedDate.getTime();
+              // Finally, sort by batch number if available
+              if (a.batchNumber && b.batchNumber) {
+                return a.batchNumber.localeCompare(b.batchNumber);
+              }
+              return 0;
             });
         }
       } else {

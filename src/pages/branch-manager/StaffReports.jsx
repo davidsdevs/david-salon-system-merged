@@ -122,36 +122,81 @@ const StaffReports = () => {
       const branchSchedules = await getSchedulesByBranch(userBranch);
       setSchedules(branchSchedules || []);
       
-      const [lendingsTo, lendingsFrom] = await Promise.all([
-        getActiveLendingForBranch(userBranch, null),
-        getActiveLendingFromBranch(userBranch, null)
-      ]);
+      // Get all lending requests (not just active) for comprehensive reporting
+      const allLendingRequests = await getLendingRequests(userBranch);
       
       const enrichedLendings = await Promise.all(
-        [...lendingsTo, ...lendingsFrom].map(async (lending) => {
+        allLendingRequests.map(async (lending) => {
           try {
-            const stylist = await getUserById(lending.stylistId);
-            const fromBranch = await getBranchById(lending.fromBranchId);
-            const toBranch = await getBranchById(lending.toBranchId);
+            let stylistName = 'Unknown';
+            let stylistEmail = '';
+            let fromBranchName = 'Unknown';
+            let toBranchName = 'Unknown';
+            
+            // Fetch stylist info if stylistId exists
+            if (lending.stylistId) {
+              try {
+                const stylist = await getUserById(lending.stylistId);
+                stylistName = getFullName(stylist);
+                stylistEmail = stylist?.email || '';
+              } catch (error) {
+                console.warn('Error fetching stylist:', lending.stylistId, error);
+                stylistName = `Stylist ID: ${lending.stylistId}`;
+              }
+            }
+            
+            // Fetch from branch info
+            if (lending.fromBranchId) {
+              try {
+                const fromBranch = await getBranchById(lending.fromBranchId);
+                fromBranchName = fromBranch?.branchName || fromBranch?.name || 'Unknown';
+              } catch (error) {
+                console.warn('Error fetching from branch:', lending.fromBranchId, error);
+                fromBranchName = `Branch ID: ${lending.fromBranchId}`;
+              }
+            }
+            
+            // Fetch to branch info
+            if (lending.toBranchId) {
+              try {
+                const toBranch = await getBranchById(lending.toBranchId);
+                toBranchName = toBranch?.branchName || toBranch?.name || 'Unknown';
+              } catch (error) {
+                console.warn('Error fetching to branch:', lending.toBranchId, error);
+                toBranchName = `Branch ID: ${lending.toBranchId}`;
+              }
+            }
             
             return {
               ...lending,
-              stylistName: getFullName(stylist),
-              stylistEmail: stylist?.email || '',
-              fromBranchName: fromBranch?.branchName || fromBranch?.name || 'Unknown',
-              toBranchName: toBranch?.branchName || toBranch?.name || 'Unknown',
-              startDate: lending.startDate?.toDate ? lending.startDate.toDate() : new Date(lending.startDate),
-              endDate: lending.endDate?.toDate ? lending.endDate.toDate() : new Date(lending.endDate),
-              requestedAt: lending.requestedAt?.toDate ? lending.requestedAt.toDate() : (lending.requestedAt ? new Date(lending.requestedAt) : null)
+              stylistName,
+              stylistEmail,
+              fromBranchName,
+              toBranchName,
+              startDate: lending.startDate?.toDate ? lending.startDate.toDate() : (lending.startDate ? new Date(lending.startDate) : null),
+              endDate: lending.endDate?.toDate ? lending.endDate.toDate() : (lending.endDate ? new Date(lending.endDate) : null),
+              requestedAt: lending.requestedAt?.toDate ? lending.requestedAt.toDate() : (lending.requestedAt ? new Date(lending.requestedAt) : null),
+              approvedAt: lending.approvedAt?.toDate ? lending.approvedAt.toDate() : (lending.approvedAt ? new Date(lending.approvedAt) : null)
             };
           } catch (error) {
-            console.error('Error enriching lending data:', error);
-            return null;
+            console.error('Error enriching lending data:', lending.id, error);
+            // Return the lending record with minimal info instead of null
+            return {
+              ...lending,
+              stylistName: lending.stylistId ? `Stylist ID: ${lending.stylistId}` : 'No Stylist',
+              stylistEmail: '',
+              fromBranchName: lending.fromBranchId ? `Branch ID: ${lending.fromBranchId}` : 'Unknown',
+              toBranchName: lending.toBranchId ? `Branch ID: ${lending.toBranchId}` : 'Unknown',
+              startDate: lending.startDate?.toDate ? lending.startDate.toDate() : (lending.startDate ? new Date(lending.startDate) : null),
+              endDate: lending.endDate?.toDate ? lending.endDate.toDate() : (lending.endDate ? new Date(lending.endDate) : null),
+              requestedAt: lending.requestedAt?.toDate ? lending.requestedAt.toDate() : (lending.requestedAt ? new Date(lending.requestedAt) : null),
+              approvedAt: lending.approvedAt?.toDate ? lending.approvedAt.toDate() : (lending.approvedAt ? new Date(lending.approvedAt) : null)
+            };
           }
         })
       );
       
-      setLendingData(enrichedLendings.filter(l => l !== null));
+      setLendingData(enrichedLendings);
     } catch (error) {
       console.error('Error fetching reports data:', error);
       toast.error('Failed to load reports data');
@@ -535,47 +580,142 @@ const StaffReports = () => {
     </div>
   );
 
-  const PrintLendingReport = () => (
-    <div ref={lendingPrintRef} style={{ display: 'none' }}>
-      <div className="p-6">
-        <div className="text-center mb-4 border-b pb-3">
-          <h1 className="text-2xl font-bold">Lending Requests Report</h1>
-          <p className="text-sm text-gray-600 mt-1">{branchName}</p>
-          <p className="text-xs text-gray-500 mt-1">Generated on {formatDate(new Date(), 'MMM dd, yyyy hh:mm a')}</p>
-        </div>
-      <table className="w-full text-xs border-collapse">
-        <thead>
-          <tr className="bg-gray-100">
-            <th className="border p-2 text-left">Stylist</th>
-            <th className="border p-2 text-left">From Branch</th>
-            <th className="border p-2 text-left">To Branch</th>
-            <th className="border p-2 text-left">Start Date</th>
-            <th className="border p-2 text-left">End Date</th>
-            <th className="border p-2 text-left">Status</th>
-            <th className="border p-2 text-left">Type</th>
-          </tr>
-        </thead>
-        <tbody>
-          {lendingData.map((lending) => (
-            <tr key={lending.id}>
-              <td className="border p-2">{lending.stylistName || 'Unknown'}</td>
-              <td className="border p-2">{lending.fromBranchName || 'N/A'}</td>
-              <td className="border p-2">{lending.toBranchName || 'N/A'}</td>
-              <td className="border p-2">{lending.startDate ? formatDate(lending.startDate) : 'N/A'}</td>
-              <td className="border p-2">{lending.endDate ? formatDate(lending.endDate) : 'N/A'}</td>
-              <td className="border p-2">{lending.status || 'N/A'}</td>
-              <td className="border p-2">{lending.type || 'N/A'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-        <div className="mt-4 text-xs text-gray-500 text-center">
-          Total Requests: {lendingData.length} | 
-          Active: {lendingData.filter(l => l.status === 'active' || l.status === 'approved').length}
+  const PrintLendingReport = () => {
+    // Filter to show only approved and active lending for the report
+    const activeLendings = lendingData.filter(l => 
+      l.status === 'active' || l.status === 'approved'
+    );
+    
+    return (
+      <div ref={lendingPrintRef} style={{ display: 'none' }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+          .lending-report {
+            font-family: 'Poppins', sans-serif;
+          }
+          .lending-report * {
+            font-family: 'Poppins', sans-serif;
+          }
+        `}</style>
+        <div className="lending-report p-8 bg-white">
+          {/* Header Section */}
+          <div className="text-center mb-8 border-b-2 border-gray-300 pb-6">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 700 }}>
+              STAFF LENDING REPORT
+            </h1>
+            <p className="text-lg text-gray-700 font-medium mb-1" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 500 }}>
+              {branchName}
+            </p>
+            <div className="flex justify-center items-center gap-4 text-sm text-gray-600 mt-3">
+              <span className="font-medium">Printed by: {currentUser?.displayName || currentUser?.email || 'Unknown'}</span>
+              <span>•</span>
+              <span>Printed: {formatDate(new Date(), 'MMM dd, yyyy, hh:mm a')}</span>
+            </div>
+          </div>
+
+          {/* Content Section */}
+          {activeLendings.length === 0 ? (
+            <div className="text-center py-16">
+              <div className="inline-block px-8 py-4 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-lg text-gray-500 font-medium" style={{ fontFamily: "'Poppins', sans-serif" }}>
+                  No active lending records to display
+                </p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="mb-6">
+                <table className="w-full border-collapse" style={{ fontFamily: "'Poppins', sans-serif" }}>
+                  <thead>
+                    <tr className="bg-[#160B53] text-white">
+                      <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                        Stylist
+                      </th>
+                      <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                        From Branch
+                      </th>
+                      <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                        To Branch
+                      </th>
+                      <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                        Start Date
+                      </th>
+                      <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                        End Date
+                      </th>
+                      <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                        Status
+                      </th>
+                      <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                        Type
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeLendings.map((lending, index) => (
+                      <tr 
+                        key={lending.id} 
+                        className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}
+                      >
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-900" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}>
+                          {lending.stylistName || 'Unknown'}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-700" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}>
+                          {lending.fromBranchName || 'N/A'}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-700" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}>
+                          {lending.toBranchName || 'N/A'}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-700" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}>
+                          {lending.startDate ? formatDate(lending.startDate) : 'N/A'}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-700" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}>
+                          {lending.endDate ? formatDate(lending.endDate) : 'N/A'}
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm">
+                          <span 
+                            className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
+                              lending.status === 'approved' 
+                                ? 'bg-green-100 text-green-800' 
+                                : lending.status === 'active'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-gray-100 text-gray-800'
+                            }`}
+                            style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 500 }}
+                          >
+                            {lending.status || 'N/A'}
+                          </span>
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-700 capitalize" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}>
+                          {lending.type || 'N/A'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* Footer Summary */}
+              <div className="mt-6 pt-4 border-t-2 border-gray-300">
+                <div className="flex justify-between items-center">
+                  <div className="text-sm text-gray-600" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}>
+                    <span className="font-semibold text-gray-900" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                      Total Active Requests:
+                    </span> {activeLendings.length}
+                  </div>
+                  <div className="text-sm text-gray-600" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 400 }}>
+                    <span className="font-semibold text-gray-900" style={{ fontFamily: "'Poppins', sans-serif", fontWeight: 600 }}>
+                      Total All Requests:
+                    </span> {lendingData.length}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   if (loading && !staff.length) {
     return (

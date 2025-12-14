@@ -12,7 +12,6 @@ import {
   Package,
   Filter,
   Eye,
-  Edit,
   Plus,
   Download,
   Upload,
@@ -20,7 +19,10 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  Clock
+  Clock,
+  Printer,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
@@ -51,6 +53,10 @@ const Products = () => {
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(20); // 5 products per row × 4 rows = 20 products per page
+  
   // Filter states
   const [filters, setFilters] = useState({
     category: 'all',
@@ -79,7 +85,7 @@ const Products = () => {
     }
   };
 
-  // Load products
+  // Load products - only products available to this branch (we offer)
   const loadProducts = async () => {
     try {
       setLoading(true);
@@ -87,7 +93,16 @@ const Products = () => {
       
       const result = await productService.getAllProducts();
       if (result.success) {
-        setProducts(result.products);
+        // Filter to only show products available to this branch
+        const branchProducts = result.products.filter(product => {
+          // Check if product is available to this branch
+          if (product.branches && Array.isArray(product.branches)) {
+            return product.branches.includes(userData?.branchId);
+          }
+          // If no branches specified, include it (backward compatibility)
+          return true;
+        });
+        setProducts(branchProducts);
       } else {
         throw new Error(result.message || 'Failed to load products');
       }
@@ -115,6 +130,11 @@ const Products = () => {
     loadServices();
     loadProducts();
   }, []);
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filters, sortBy, sortOrder]);
 
   // Get unique categories
   const categories = [...new Set(products.map(p => p.category))].filter(Boolean);
@@ -170,6 +190,12 @@ const Products = () => {
       }
     });
 
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedProducts = filteredProducts.slice(startIndex, endIndex);
+
   // Handle product details
   const handleViewDetails = (product) => {
     setSelectedProduct(product);
@@ -188,6 +214,86 @@ const Products = () => {
     setSearchTerm('');
   };
 
+  // Print/Report function for branch manager viewing
+  const handlePrintReport = () => {
+    if (!filteredProducts.length) {
+      toast.error('No products to print');
+      return;
+    }
+
+    // Create a print-friendly HTML content
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Products Report - ${userData?.branchName || 'Branch'}</title>
+          <style>
+            @media print {
+              @page { margin: 1cm; }
+            }
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            h1 { color: #160B53; margin-bottom: 10px; }
+            .header-info { margin-bottom: 20px; color: #666; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f3f4f6; font-weight: bold; }
+            .status-active { color: green; }
+            .status-inactive { color: red; }
+            .footer { margin-top: 30px; font-size: 12px; color: #666; }
+          </style>
+        </head>
+        <body>
+          <h1>Products Report</h1>
+          <div class="header-info">
+            <p><strong>Branch:</strong> ${userData?.branchName || 'N/A'}</p>
+            <p><strong>Generated:</strong> ${format(new Date(), 'MMM dd, yyyy HH:mm')}</p>
+            <p><strong>Total Products:</strong> ${filteredProducts.length}</p>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Brand</th>
+                <th>Category</th>
+                <th>UPC</th>
+                <th>OTC Price</th>
+                <th>Unit Cost</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredProducts.map(product => `
+                <tr>
+                  <td>${product.name || 'N/A'}</td>
+                  <td>${product.brand || 'N/A'}</td>
+                  <td>${product.category || 'N/A'}</td>
+                  <td>${product.upc || 'N/A'}</td>
+                  <td>₱${(product.otcPrice || 0).toLocaleString()}</td>
+                  <td>₱${(product.unitCost || 0).toLocaleString()}</td>
+                  <td class="status-${product.status?.toLowerCase() || 'active'}">${product.status || 'Active'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div class="footer">
+            <p>This report is for branch manager viewing purposes only.</p>
+          </div>
+        </body>
+      </html>
+    `;
+
+    // Open print window
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    printWindow.focus();
+    
+    // Wait for content to load, then print
+    setTimeout(() => {
+      printWindow.print();
+    }, 250);
+  };
+
   // Export products to Excel
   const exportProducts = () => {
     if (!filteredProducts.length) {
@@ -202,7 +308,6 @@ const Products = () => {
         { key: 'category', label: 'Category' },
         { key: 'description', label: 'Description' },
         { key: 'upc', label: 'UPC' },
-        { key: 'sku', label: 'SKU' },
         { key: 'otcPrice', label: 'OTC Price (₱)' },
         { key: 'salonUsePrice', label: 'Salon Use Price (₱)' },
         { key: 'unitCost', label: 'Unit Cost (₱)' },
@@ -253,7 +358,6 @@ const Products = () => {
             category: row.Category || row.category || '',
             description: row.Description || row.description || '',
             upc: row.UPC || row.upc || '',
-            sku: row.SKU || row.sku || '',
             otcPrice: parseFloat(row['OTC Price'] || row.otcPrice || 0),
             salonUsePrice: parseFloat(row['Salon Use Price'] || row.salonUsePrice || 0),
             unitCost: parseFloat(row['Unit Cost'] || row.unitCost || 0),
@@ -356,6 +460,14 @@ const Products = () => {
           <Button 
             variant="outline" 
             className="flex items-center gap-2 text-xs md:text-sm"
+            onClick={handlePrintReport}
+          >
+            <Printer className="h-4 w-4" />
+            <span className="hidden sm:inline">Report</span>
+          </Button>
+          <Button 
+            variant="outline" 
+            className="flex items-center gap-2 text-xs md:text-sm"
             onClick={() => setIsImportModalOpen(true)}
           >
             <Upload className="h-4 w-4" />
@@ -368,10 +480,6 @@ const Products = () => {
           >
             <Download className="h-4 w-4" />
             <span className="hidden sm:inline">Export</span>
-          </Button>
-          <Button className="flex items-center gap-2 bg-[#160B53] hover:bg-[#12094A] text-white text-xs md:text-sm">
-            <Plus className="h-4 w-4" />
-            Add Product
           </Button>
         </div>
       </div>
@@ -428,147 +536,113 @@ const Products = () => {
         </div>
       </Card>
 
-      {/* Products Table */}
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto -mx-4 md:mx-0">
-          <div className="inline-block min-w-full align-middle md:px-0">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Product
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">
-                    Brand
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">
-                    Category
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">
-                    UPC
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    OTC Price
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">
-                    Salon Use
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">
-                    Unit Cost
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden xl:table-cell">
-                    Commission
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden lg:table-cell">
-                    Service Mapping
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-3 md:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredProducts.map((product) => (
-                  <tr key={product.id} className="hover:bg-gray-50">
-                    <td className="px-3 md:px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        {product.imageUrl ? (
-                          <img
-                            src={product.imageUrl}
-                            alt={product.name}
-                            className="w-full h-full object-cover rounded-lg"
-                            onError={(e) => {
-                              e.target.style.display = 'none';
-                              if (e.target.nextSibling) {
-                                e.target.nextSibling.style.display = 'flex';
-                              }
-                            }}
-                          />
-                        ) : null}
-                        <div className="w-full h-full flex items-center justify-center" style={{ display: product.imageUrl ? 'none' : 'flex' }}>
-                          <Package className="h-5 w-5 text-gray-400" />
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">{product.name}</div>
-                        <div className="text-xs text-gray-500 line-clamp-1 mt-1">{product.description}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden md:table-cell">
-                    <div className="text-sm text-gray-900">{product.brand || 'N/A'}</div>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden lg:table-cell">
-                    <div className="text-sm text-gray-900">{product.category || 'N/A'}</div>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden xl:table-cell">
-                    <div className="text-sm text-gray-500">{product.upc || 'N/A'}</div>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-green-600">₱{product.otcPrice?.toLocaleString() || '0'}</div>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden lg:table-cell">
-                    <div className="text-sm font-medium text-blue-600">₱{product.salonUsePrice?.toLocaleString() || '0'}</div>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden xl:table-cell">
-                    <div className="text-sm text-gray-900">₱{product.unitCost?.toLocaleString() || '0'}</div>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap hidden xl:table-cell">
-                    <div className="text-sm text-gray-900">{product.commissionPercentage || 0}%</div>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 hidden lg:table-cell">
-                    {product.serviceProductMapping && Object.keys(product.serviceProductMapping).length > 0 ? (
-                      <div className="space-y-1">
-                        {Object.entries(product.serviceProductMapping).map(([serviceId, minimumCost]) => {
-                          const service = services.find(s => s.id === serviceId);
-                          return (
-                            <div key={serviceId} className="flex items-center gap-2 text-xs">
-                              <Scissors className="w-3 h-3 text-purple-500 flex-shrink-0" />
-                              <span className="text-gray-700 truncate">{service?.name || 'Unknown Service'}</span>
-                              <span className="text-purple-600 font-medium">₱{parseFloat(minimumCost || 0).toLocaleString()}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-gray-400">None</span>
-                    )}
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(product.status)}`}>
-                      {getStatusIcon(product.status)}
-                      {product.status}
-                    </span>
-                  </td>
-                  <td className="px-3 md:px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleViewDetails(product)}
-                        className="flex items-center gap-1"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex items-center gap-1"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Products Grid - 5 per row */}
+      <Card className="p-4 md:p-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+          {paginatedProducts.map((product) => (
+            <div key={product.id} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+              {/* Product Image */}
+              <div className="w-full h-32 bg-gray-100 rounded-lg flex items-center justify-center mb-3">
+                {product.imageUrl ? (
+                  <img
+                    src={product.imageUrl}
+                    alt={product.name}
+                    className="w-full h-full object-cover rounded-lg"
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                      if (e.target.nextSibling) {
+                        e.target.nextSibling.style.display = 'flex';
+                      }
+                    }}
+                  />
+                ) : null}
+                <div className="w-full h-full flex items-center justify-center" style={{ display: product.imageUrl ? 'none' : 'flex' }}>
+                  <Package className="h-12 w-12 text-gray-400" />
+                </div>
+              </div>
+
+              {/* Product Info */}
+              <div className="space-y-2">
+                <h3 className="font-semibold text-gray-900 text-sm line-clamp-2">{product.name}</h3>
+                <p className="text-xs text-gray-500">{product.brand || 'N/A'}</p>
+                <p className="text-xs text-gray-400 line-clamp-1">{product.category || 'N/A'}</p>
+                
+                {/* Prices */}
+                <div className="space-y-1 pt-2 border-t border-gray-100">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-gray-500">OTC:</span>
+                    <span className="text-sm font-semibold text-green-600">₱{product.otcPrice?.toLocaleString() || '0'}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-gray-500">Salon:</span>
+                    <span className="text-sm font-semibold text-blue-600">₱{product.salonUsePrice?.toLocaleString() || '0'}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-gray-500">Cost:</span>
+                    <span className="text-xs text-gray-700">₱{product.unitCost?.toLocaleString() || '0'}</span>
+                  </div>
+                </div>
+
+                {/* Status */}
+                <div className="pt-2">
+                  <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(product.status)}`}>
+                    {getStatusIcon(product.status)}
+                    {product.status}
+                  </span>
+                </div>
+
+                {/* Actions */}
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleViewDetails(product)}
+                    className="w-full flex items-center justify-center gap-2"
+                  >
+                    <Eye className="h-4 w-4" />
+                    View Details
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
-        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">
+            <div className="text-sm text-gray-600">
+              Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+              <span className="font-medium">{Math.min(endIndex, filteredProducts.length)}</span> of{' '}
+              <span className="font-medium">{filteredProducts.length}</span> products
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="flex items-center gap-1"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              <div className="text-sm text-gray-600">
+                Page <span className="font-medium">{currentPage}</span> of <span className="font-medium">{totalPages}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="flex items-center gap-1"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Empty State */}
@@ -579,13 +653,9 @@ const Products = () => {
           <p className="text-gray-600 mb-4">
             {searchTerm || Object.values(filters).some(f => f !== 'all' && (typeof f === 'object' ? Object.values(f).some(v => v !== '') : f !== ''))
               ? 'Try adjusting your search or filters'
-              : 'Get started by adding your first product'
+              : 'No products are available to this branch'
             }
           </p>
-          <Button className="flex items-center gap-2 mx-auto bg-[#160B53] hover:bg-[#12094A] text-white">
-            <Plus className="h-4 w-4" />
-            Add Product
-          </Button>
         </Card>
       )}
 
@@ -623,7 +693,7 @@ const Products = () => {
                   </span>
                 </div>
                 <p className="text-lg text-gray-600 mb-2">{selectedProduct.brand}</p>
-                <p className="text-sm text-gray-500">UPC: {selectedProduct.upc}</p>
+                <p className="text-sm text-gray-500">UPC: {selectedProduct.upc || 'N/A'}</p>
               </div>
             </div>
 
@@ -662,8 +732,35 @@ const Products = () => {
                 </div>
                 
                 <div>
-                  <label className="text-sm font-medium text-gray-500">Salon Use Price</label>
-                  <p className="text-lg font-semibold text-blue-600 mt-1">₱{selectedProduct.salonUsePrice?.toLocaleString() || '0'}</p>
+                  <label className="text-sm font-medium text-gray-500">Service Product Mapping</label>
+                  {(() => {
+                    // Find all services that have this product in their productMappings
+                    const mappedServices = services.filter(service => {
+                      if (!service.productMappings || !Array.isArray(service.productMappings)) {
+                        return false;
+                      }
+                      return service.productMappings.some(mapping => 
+                        mapping.productId === selectedProduct.id
+                      );
+                    });
+
+                    if (mappedServices.length > 0) {
+                      return (
+                        <div className="mt-2 space-y-1">
+                          {mappedServices.map((service) => (
+                            <div key={service.id} className="flex items-center gap-2">
+                              <Scissors className="w-4 h-4 text-purple-500 flex-shrink-0" />
+                              <span className="text-gray-900">{service.name || 'Unknown Service'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <p className="text-gray-500 mt-1 text-sm">No services mapped</p>
+                      );
+                    }
+                  })()}
                 </div>
                 
                 <div>
@@ -691,29 +788,52 @@ const Products = () => {
               </div>
             </div>
 
-            {/* Service Mapping */}
-            {selectedProduct.serviceProductMapping && Object.keys(selectedProduct.serviceProductMapping).length > 0 && (
-              <div className="border-t pt-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
-                  <Scissors className="w-4 h-4 text-purple-500" />
-                  Service-Product Mapping (Minimum Cost)
-                </h3>
-                <div className="space-y-2">
-                  {Object.entries(selectedProduct.serviceProductMapping).map(([serviceId, minimumCost]) => {
-                    const service = services.find(s => s.id === serviceId);
-                    return (
-                      <div key={serviceId} className="flex items-center justify-between p-3 bg-purple-50 border border-purple-200 rounded-lg">
-                        <div className="flex items-center gap-2">
-                          <Scissors className="w-4 h-4 text-purple-500" />
-                          <span className="text-sm font-medium text-gray-900">{service?.name || 'Unknown Service'}</span>
-                        </div>
-                        <span className="text-sm font-semibold text-purple-600">₱{parseFloat(minimumCost || 0).toLocaleString()}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            {/* Service Mapping Details */}
+            {(() => {
+              // Find all services that have this product in their productMappings
+              const mappedServices = services.filter(service => {
+                if (!service.productMappings || !Array.isArray(service.productMappings)) {
+                  return false;
+                }
+                return service.productMappings.some(mapping => 
+                  mapping.productId === selectedProduct.id
+                );
+              });
+
+              if (mappedServices.length > 0) {
+                return (
+                  <div className="border-t pt-6">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                      <Scissors className="w-4 h-4 text-purple-500" />
+                      Service-Product Mapping Details
+                    </h3>
+                    <div className="space-y-2">
+                      {mappedServices.map((service) => {
+                        const productMapping = service.productMappings.find(m => m.productId === selectedProduct.id);
+                        return (
+                          <div key={service.id} className="p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Scissors className="w-4 h-4 text-purple-500" />
+                              <span className="text-sm font-medium text-gray-900">{service.name || 'Unknown Service'}</span>
+                            </div>
+                            {productMapping?.instructions && Array.isArray(productMapping.instructions) && productMapping.instructions.length > 0 ? (
+                              <div className="ml-6 space-y-1">
+                                {productMapping.instructions.map((instruction, idx) => (
+                                  <div key={idx} className="text-xs text-gray-600">
+                                    {instruction.instruction}: {instruction.quantity} {instruction.unit} @ {instruction.percentage}%
+                                  </div>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             {/* Timestamps */}
             <div className="border-t pt-4">
@@ -819,7 +939,7 @@ const Products = () => {
         onClose={() => setIsImportModalOpen(false)}
         onImport={handleImport}
         templateColumns={[
-          'Name', 'Brand', 'Category', 'Description', 'UPC', 'SKU',
+          'Name', 'Brand', 'Category', 'Description', 'UPC',
           'OTC Price', 'Salon Use Price', 'Unit Cost', 'Commission Percentage',
           'Status', 'Variants', 'Shelf Life', 'Suppliers'
         ]}
@@ -831,7 +951,6 @@ const Products = () => {
             Category: 'Hair Care',
             Description: 'Professional salon shampoo',
             UPC: '123456789012',
-            SKU: 'PRD-LOR-SHA-1234',
             'OTC Price': '850',
             'Salon Use Price': '650',
             'Unit Cost': '450',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { Card } from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
@@ -48,7 +48,16 @@ const StylistPortfolios = () => {
   const [stylists, setStylists] = useState({});
   const [selectedStylist, setSelectedStylist] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all"); // Changed default to "all"
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [previewImage, setPreviewImage] = useState(null);
+
+  // Set page title with role prefix
+  useEffect(() => {
+    document.title = 'Branch Manager - Stylist Portfolios | DSMS';
+    return () => {
+      document.title = 'DSMS - David\'s Salon Management System';
+    };
+  }, []);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [lastVisible, setLastVisible] = useState(null);
@@ -61,16 +70,37 @@ const StylistPortfolios = () => {
   const [rejectionRemark, setRejectionRemark] = useState("");
   const itemsPerPage = 12;
 
-  // Filter portfolios based on search term
+  // Get unique categories from all portfolios
+  const availableCategories = useMemo(() => {
+    const categories = new Set();
+    portfolios.forEach(p => {
+      if (p.category) {
+        categories.add(p.category);
+      }
+    });
+    return Array.from(categories).sort();
+  }, [portfolios]);
+
+  // Filter portfolios based on search term and category
   const filteredPortfolios = portfolios.filter((portfolio) => {
-    if (!searchTerm) return true;
+    // Search filter
+    if (searchTerm) {
+      const search = searchTerm.toLowerCase();
+      const title = portfolio.title?.toLowerCase() || "";
+      const category = portfolio.category?.toLowerCase() || "";
+      const stylistName = stylists[portfolio.stylistId]?.fullName?.toLowerCase() || "";
+      
+      if (!title.includes(search) && !category.includes(search) && !stylistName.includes(search)) {
+        return false;
+      }
+    }
     
-    const search = searchTerm.toLowerCase();
-    const title = portfolio.title?.toLowerCase() || "";
-    const category = portfolio.category?.toLowerCase() || "";
-    const stylistName = stylists[portfolio.stylistId]?.fullName?.toLowerCase() || "";
+    // Category filter
+    if (categoryFilter !== "all" && portfolio.category !== categoryFilter) {
+      return false;
+    }
     
-    return title.includes(search) || category.includes(search) || stylistName.includes(search);
+    return true;
   });
 
   // Calculate summary stats
@@ -263,7 +293,7 @@ const StylistPortfolios = () => {
 
   useEffect(() => {
     fetchPortfolios(1);
-  }, [userData, selectedStylist, statusFilter]);
+  }, [userData, selectedStylist, statusFilter, categoryFilter]);
 
   const handleApprove = async (portfolioId) => {
     try {
@@ -461,6 +491,20 @@ const StylistPortfolios = () => {
               <option value="pending">Pending</option>
               <option value="active">Approved</option>
               <option value="rejected">Rejected</option>
+            </select>
+              
+            {/* Category Filter Dropdown */}
+            <select
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#160B53] focus:border-[#160B53] whitespace-nowrap min-w-[150px]"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+            >
+              <option value="all">All Services</option>
+              {availableCategories.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
             </select>
           </div>
 

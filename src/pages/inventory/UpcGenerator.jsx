@@ -38,7 +38,8 @@ import {
   Banknote,
   ClipboardList,
   UserCog,
-  PackageCheck
+  PackageCheck,
+  FileText
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -67,12 +68,19 @@ const UpcGenerator = () => {
   const [selectedBatches, setSelectedBatches] = useState([]);
   const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [qrCodesToPrint, setQrCodesToPrint] = useState([]);
+  const [currentBatches, setCurrentBatches] = useState([]);
+  const [loadingBatches, setLoadingBatches] = useState(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isMassPrintModalOpen, setIsMassPrintModalOpen] = useState(false);
+  const [selectedBatchesForPrint, setSelectedBatchesForPrint] = useState([]);
   
   // Filter states
   const [filters, setFilters] = useState({
     category: 'all',
     status: 'all',
-    hasQRCode: 'all'
+    hasQRCode: 'all',
+    brand: 'all',
+    hasBatches: 'all'
   });
 
   // Generate form states
@@ -224,10 +232,63 @@ const UpcGenerator = () => {
     }
   };
 
+  // Load current batches/products
+  const loadCurrentBatches = async () => {
+    if (!userBranch) return;
+    
+    try {
+      setLoadingBatches(true);
+      const { collection, query, where, getDocs } = await import('firebase/firestore');
+      const { db } = await import('../../config/firebase');
+      
+      const stocksRef = collection(db, 'stocks');
+      const q = query(
+        stocksRef,
+        where('branchId', '==', userBranch),
+        where('stockType', '==', 'batch')
+      );
+      
+      const snapshot = await getDocs(q);
+      const batches = [];
+      
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (data.batchNumber && (data.realTimeStock || 0) > 0) {
+          batches.push({
+            id: doc.id,
+            batchNumber: data.batchNumber,
+            productId: data.productId,
+            productName: data.productName || 'Unknown',
+            expirationDate: data.expirationDate?.toDate ? data.expirationDate.toDate() : 
+                           data.expirationDate instanceof Date ? data.expirationDate :
+                           data.expirationDate ? new Date(data.expirationDate) : null,
+            remainingQuantity: data.realTimeStock || 0,
+            status: data.status || 'active'
+          });
+        }
+      });
+      
+      // Sort by expiration date
+      batches.sort((a, b) => {
+        if (!a.expirationDate) return 1;
+        if (!b.expirationDate) return -1;
+        return new Date(a.expirationDate) - new Date(b.expirationDate);
+      });
+      
+      setCurrentBatches(batches);
+    } catch (error) {
+      console.error('Error loading current batches:', error);
+      setCurrentBatches([]);
+    } finally {
+      setLoadingBatches(false);
+    }
+  };
+
   // Load data on mount
   useEffect(() => {
     loadData();
-  }, []);
+    loadCurrentBatches();
+  }, [userBranch]);
 
   // Auto-set branch to user's branch
   useEffect(() => {
@@ -255,20 +316,39 @@ const UpcGenerator = () => {
     }
   }, [generateForm.productId, generateForm.branchId]);
 
-  // Get unique categories
+  // Get unique categories and brands
   const categories = [...new Set(products.map(p => p.category))].filter(Boolean);
+  const brands = [...new Set(products.map(p => p.brand))].filter(Boolean);
 
   // Filter and sort products
   const filteredProducts = products
     .filter(product => {
-      const matchesSearch = product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           product.brand?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           (product.upc || '').toLowerCase().includes(searchTerm.toLowerCase());
+      // Safe search - handle undefined/null values
+      const searchLower = (searchTerm || '').toLowerCase();
+      const productName = (product.name || '').toLowerCase();
+      const productBrand = (product.brand || '').toLowerCase();
+      const productUPC = (product.upc || '').toLowerCase();
       
-      const matchesCategory = filters.category === 'all' || product.category === filters.category;
-      const matchesStatus = filters.status === 'all' || product.status === filters.status;
+      const matchesSearch = !searchTerm || 
+                           productName.includes(searchLower) ||
+                           productBrand.includes(searchLower) ||
+                           productUPC.includes(searchLower);
       
-      return matchesSearch && matchesCategory && matchesStatus;
+      const matchesCategory = filters.category === 'all' || (product.category || '') === filters.category;
+      const matchesStatus = filters.status === 'all' || (product.status || '') === filters.status;
+      const matchesBrand = filters.brand === 'all' || (product.brand || '') === filters.brand;
+      
+      // Check if product has batches (for hasBatches filter)
+      let matchesHasBatches = true;
+      if (filters.hasBatches === 'yes') {
+        const hasBatches = currentBatches.some(b => b.productId === product.id);
+        matchesHasBatches = hasBatches;
+      } else if (filters.hasBatches === 'no') {
+        const hasBatches = currentBatches.some(b => b.productId === product.id);
+        matchesHasBatches = !hasBatches;
+      }
+      
+      return matchesSearch && matchesCategory && matchesStatus && matchesBrand && matchesHasBatches;
     })
     .sort((a, b) => {
       let aValue = a[sortBy];
@@ -367,10 +447,14 @@ const UpcGenerator = () => {
       // Use html2canvas to convert the sticker element to PNG
       const canvas = await html2canvas(stickerElement, {
         backgroundColor: '#ffffff',
-        scale: 2, // Higher quality
+        scale: 3, // Higher quality for better text rendering
         logging: false,
         useCORS: true,
-        allowTaint: true
+        allowTaint: true,
+        width: stickerElement.offsetWidth,
+        height: stickerElement.offsetHeight,
+        windowWidth: stickerElement.scrollWidth,
+        windowHeight: stickerElement.scrollHeight
       });
 
       // Convert canvas to blob and download
@@ -636,11 +720,24 @@ const UpcGenerator = () => {
               </select>
               <Button
                 variant="outline"
-                onClick={() => setFilters({
-                  category: 'all',
-                  status: 'all',
-                  hasQRCode: 'all'
-                })}
+                onClick={() => setIsFilterModalOpen(true)}
+                className="flex items-center gap-2"
+              >
+                <Filter className="h-4 w-4" />
+                More Filters
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setFilters({
+                    category: 'all',
+                    status: 'all',
+                    hasQRCode: 'all',
+                    brand: 'all',
+                    hasBatches: 'all'
+                  });
+                  setSearchTerm('');
+                }}
                 className="flex items-center gap-2"
               >
                 <RefreshCw className="h-4 w-4" />
@@ -759,6 +856,102 @@ const UpcGenerator = () => {
             </p>
           </Card>
         )}
+
+        {/* Current Batches/Products Display */}
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900">Current Batches/Products</h2>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadCurrentBatches}
+              disabled={loadingBatches}
+              className="flex items-center gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${loadingBatches ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+          
+          {loadingBatches ? (
+            <div className="flex items-center justify-center py-8">
+              <RefreshCw className="h-6 w-6 animate-spin text-blue-600" />
+              <span className="ml-2 text-gray-600">Loading batches...</span>
+            </div>
+          ) : currentBatches.length === 0 ? (
+            <div className="text-center py-8 bg-gray-50 rounded-lg">
+              <Package className="h-12 w-12 text-gray-400 mx-auto mb-2" />
+              <p className="text-gray-600">No active batches found</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Batch Number</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Quantity</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expiration</th>
+                    <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {currentBatches.map((batch) => {
+                    const product = products.find(p => p.id === batch.productId);
+                    const isExpired = batch.expirationDate && new Date(batch.expirationDate) < new Date();
+                    const isExpiringSoon = batch.expirationDate && 
+                      new Date(batch.expirationDate) <= new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) &&
+                      new Date(batch.expirationDate) > new Date();
+                    
+                    return (
+                      <tr key={batch.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <div className="text-sm font-medium text-gray-900">{batch.productName}</div>
+                          {product && (
+                            <div className="text-xs text-gray-500">{product.brand || ''}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-sm text-gray-900 font-mono">{batch.batchNumber}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="text-sm text-gray-900">{batch.remainingQuantity} units</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {batch.expirationDate ? (
+                            <span className={`text-sm ${isExpired ? 'text-red-600 font-semibold' : isExpiringSoon ? 'text-orange-600 font-semibold' : 'text-gray-900'}`}>
+                              {format(new Date(batch.expirationDate), 'MMM dd, yyyy')}
+                            </span>
+                          ) : (
+                            <span className="text-sm text-gray-400">No expiration</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              if (product) {
+                                handleGenerateQRCode(product);
+                                // Auto-select this batch
+                                setTimeout(() => {
+                                  setGenerateForm(prev => ({ ...prev, batchId: batch.id }));
+                                }, 100);
+                              }
+                            }}
+                            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white"
+                          >
+                            <QrCode className="h-4 w-4" />
+                            Generate
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
 
         {/* Product Details Modal */}
         {isDetailsModalOpen && selectedProduct && (
@@ -1041,14 +1234,36 @@ const UpcGenerator = () => {
 
                   {/* Printable QR Code Stickers */}
                   <div ref={printRef} className="print-content">
-                    <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+                    {/* Grid layout optimized for cutting - 3x3 or 4x4 depending on quantity */}
+                    <div className={`grid gap-2 p-4 bg-gray-50 rounded-lg ${
+                      qrCodesToPrint.length <= 4 ? 'grid-cols-2' : 
+                      qrCodesToPrint.length <= 9 ? 'grid-cols-3' : 
+                      qrCodesToPrint.length <= 16 ? 'grid-cols-4' : 'grid-cols-5'
+                    }`}
+                    style={{
+                      gridTemplateColumns: `repeat(${
+                        qrCodesToPrint.length <= 4 ? 2 : 
+                        qrCodesToPrint.length <= 9 ? 3 : 
+                        qrCodesToPrint.length <= 16 ? 4 : 5
+                      }, 1fr)`
+                    }}>
                       {qrCodesToPrint.map((qrCode, index) => (
                         <div
                           key={index}
                           id={`sticker-${index}`}
-                          className="bg-white border-2 border-gray-300 p-5 rounded-lg flex flex-col items-center justify-center space-y-3 shadow-sm hover:shadow-md transition-shadow"
-                          style={{ minHeight: '280px', pageBreakInside: 'avoid' }}
+                          className="bg-white border-2 border-dashed border-gray-400 p-3 rounded-lg flex flex-col items-center justify-center space-y-2 shadow-sm"
+                          style={{ 
+                            minHeight: '200px', 
+                            maxHeight: '200px',
+                            pageBreakInside: 'avoid',
+                            position: 'relative'
+                          }}
                         >
+                          {/* Cutting guide lines */}
+                          <div className="absolute inset-0 pointer-events-none" style={{
+                            border: '1px dashed #ccc',
+                            borderRadius: '4px'
+                          }}></div>
                           {/* Logo */}
                           <div className="mb-2">
                             <img
@@ -1092,9 +1307,18 @@ const UpcGenerator = () => {
                           </div>
                           
                           {/* Product Info */}
-                          <div className="text-center w-full space-y-1.5">
-                            <p className="text-sm font-bold text-gray-900 line-clamp-2 leading-tight">
-                              {qrCode.productName}
+                          <div className="text-center w-full space-y-1.5 px-2">
+                            <p className="text-xs font-bold text-gray-900 leading-tight break-words" 
+                               style={{ 
+                                 wordBreak: 'break-word',
+                                 overflowWrap: 'break-word',
+                                 maxHeight: '2.5em',
+                                 display: '-webkit-box',
+                                 WebkitLineClamp: 2,
+                                 WebkitBoxOrient: 'vertical',
+                                 overflow: 'hidden'
+                               }}>
+                              {qrCode.productName || 'Product Name'}
                             </p>
                             
                             {qrCode.batchNumber && qrCode.batchNumber !== 'N/A' && (
@@ -1203,8 +1427,356 @@ const UpcGenerator = () => {
                       margin: 0.5cm;
                       size: A4;
                     }
+                    .print-content .grid {
+                      gap: 0.3cm !important;
+                    }
+                    .print-content [id^="sticker-"] {
+                      border: 2px dashed #999 !important;
+                      margin: 0.1cm;
+                    }
                   }
                 `}</style>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Enhanced Filters Modal */}
+        {isFilterModalOpen && (
+          <Modal
+            isOpen={isFilterModalOpen}
+            onClose={() => setIsFilterModalOpen(false)}
+            title="Advanced Filters"
+            size="md"
+          >
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
+                <select
+                  value={filters.category}
+                  onChange={(e) => setFilters(prev => ({ ...prev, category: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="all">All Categories</option>
+                  {categories.map(category => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Brand</label>
+                <select
+                  value={filters.brand}
+                  onChange={(e) => setFilters(prev => ({ ...prev, brand: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="all">All Brands</option>
+                  {brands.map(brand => (
+                    <option key={brand} value={brand}>{brand}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                <select
+                  value={filters.status}
+                  onChange={(e) => setFilters(prev => ({ ...prev, status: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="all">All Status</option>
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                  <option value="Discontinued">Discontinued</option>
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Has Batches</label>
+                <select
+                  value={filters.hasBatches}
+                  onChange={(e) => setFilters(prev => ({ ...prev, hasBatches: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="all">All Products</option>
+                  <option value="yes">Has Batches</option>
+                  <option value="no">No Batches</option>
+                </select>
+              </div>
+              
+              <div className="flex justify-end gap-3 pt-4">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setFilters({
+                      category: 'all',
+                      status: 'all',
+                      hasQRCode: 'all',
+                      brand: 'all',
+                      hasBatches: 'all'
+                    });
+                  }}
+                >
+                  Reset
+                </Button>
+                <Button onClick={() => setIsFilterModalOpen(false)}>
+                  Apply Filters
+                </Button>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {/* Report Modal */}
+        {isReportModalOpen && (
+          <Modal
+            isOpen={isReportModalOpen}
+            onClose={() => setIsReportModalOpen(false)}
+            title="QR Code Generator Report"
+            size="lg"
+          >
+            <div className="space-y-4">
+              <div className="flex justify-end gap-2 mb-4">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const printWindow = window.open('', '_blank');
+                    const reportContent = `
+                      <!DOCTYPE html>
+                      <html>
+                        <head>
+                          <title>QR Code Generator Report</title>
+                          <style>
+                            body { font-family: Arial, sans-serif; padding: 20px; }
+                            h1 { color: #160B53; }
+                            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                            th { background-color: #f2f2f2; }
+                            .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 20px; }
+                            .stat-card { background: #f9fafb; padding: 15px; border-radius: 8px; }
+                          </style>
+                        </head>
+                        <body>
+                          <h1>QR Code Generator Report</h1>
+                          <p>Generated: ${new Date().toLocaleString()}</p>
+                          <div class="stats">
+                            <div class="stat-card">
+                              <h3>Total Products</h3>
+                              <p>${stats.totalProducts}</p>
+                            </div>
+                            <div class="stat-card">
+                              <h3>With QR Code</h3>
+                              <p>${stats.productsWithQRCode}</p>
+                            </div>
+                            <div class="stat-card">
+                              <h3>Total Generated</h3>
+                              <p>${stats.totalGenerated}</p>
+                            </div>
+                            <div class="stat-card">
+                              <h3>This Week</h3>
+                              <p>${stats.recentGenerated}</p>
+                            </div>
+                          </div>
+                          <h2>Current Batches (${currentBatches.length})</h2>
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Product</th>
+                                <th>Batch Number</th>
+                                <th>Quantity</th>
+                                <th>Expiration Date</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              ${currentBatches.map(batch => `
+                                <tr>
+                                  <td>${batch.productName}</td>
+                                  <td>${batch.batchNumber}</td>
+                                  <td>${batch.remainingQuantity}</td>
+                                  <td>${batch.expirationDate ? format(new Date(batch.expirationDate), 'MMM dd, yyyy') : 'N/A'}</td>
+                                </tr>
+                              `).join('')}
+                            </tbody>
+                          </table>
+                        </body>
+                      </html>
+                    `;
+                    printWindow.document.write(reportContent);
+                    printWindow.document.close();
+                    printWindow.print();
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <Printer className="h-4 w-4" />
+                  Print Report
+                </Button>
+              </div>
+              
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <Card className="p-4">
+                  <div className="text-sm text-gray-600">Total Products</div>
+                  <div className="text-2xl font-bold text-gray-900">{stats.totalProducts}</div>
+                </Card>
+                <Card className="p-4">
+                  <div className="text-sm text-gray-600">With QR Code</div>
+                  <div className="text-2xl font-bold text-gray-900">{stats.productsWithQRCode}</div>
+                </Card>
+                <Card className="p-4">
+                  <div className="text-sm text-gray-600">Total Generated</div>
+                  <div className="text-2xl font-bold text-gray-900">{stats.totalGenerated}</div>
+                </Card>
+                <Card className="p-4">
+                  <div className="text-sm text-gray-600">This Week</div>
+                  <div className="text-2xl font-bold text-gray-900">{stats.recentGenerated}</div>
+                </Card>
+              </div>
+              
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Current Batches ({currentBatches.length})</h3>
+                <div className="max-h-96 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left">Product</th>
+                        <th className="px-4 py-2 text-left">Batch</th>
+                        <th className="px-4 py-2 text-left">Quantity</th>
+                        <th className="px-4 py-2 text-left">Expiration</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {currentBatches.map(batch => (
+                        <tr key={batch.id}>
+                          <td className="px-4 py-2">{batch.productName}</td>
+                          <td className="px-4 py-2 font-mono">{batch.batchNumber}</td>
+                          <td className="px-4 py-2">{batch.remainingQuantity}</td>
+                          <td className="px-4 py-2">
+                            {batch.expirationDate ? format(new Date(batch.expirationDate), 'MMM dd, yyyy') : 'N/A'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        {/* Mass Print Modal with Cutting Layout */}
+        {isMassPrintModalOpen && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex min-h-screen items-center justify-center p-4">
+              <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm" onClick={() => setIsMassPrintModalOpen(false)} />
+              
+              <div className="relative w-full max-w-6xl transform overflow-hidden rounded-xl bg-white shadow-2xl">
+                <div className="bg-gradient-to-r from-[#160B53] to-[#2D1B69] px-6 py-5 text-white">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-bold">Mass Print - Cutting Layout</h3>
+                      <p className="text-sm text-blue-100 mt-0.5">Select batches to print in grid layout</p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsMassPrintModalOpen(false)}
+                      className="text-white border-white/30 hover:bg-white/20"
+                    >
+                      <XCircle className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="p-6">
+                  <div className="mb-4">
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">Select Batches to Print</h4>
+                    <div className="max-h-64 overflow-y-auto border rounded-lg p-2">
+                      {currentBatches.length === 0 ? (
+                        <p className="text-sm text-gray-500 text-center py-4">No batches available</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {currentBatches.map(batch => {
+                            const product = products.find(p => p.id === batch.productId);
+                            const isSelected = selectedBatchesForPrint.some(b => 
+                              b.productId === batch.productId && b.batchNumber === batch.batchNumber
+                            );
+                            
+                            return (
+                              <label key={batch.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      const qrCode = {
+                                        id: `qr-${batch.id}-${Date.now()}`,
+                                        qrCodeString: JSON.stringify({
+                                          productId: batch.productId,
+                                          productName: batch.productName,
+                                          price: product?.otcPrice || 0,
+                                          batchNumber: batch.batchNumber,
+                                          batchId: batch.id,
+                                          expirationDate: batch.expirationDate ? new Date(batch.expirationDate).toISOString() : null,
+                                          branchId: userBranch,
+                                          timestamp: Date.now()
+                                        }),
+                                        batchNumber: batch.batchNumber,
+                                        productName: batch.productName,
+                                        productId: batch.productId,
+                                        price: product?.otcPrice || 0,
+                                        expirationDate: batch.expirationDate ? new Date(batch.expirationDate) : null,
+                                        branchId: userBranch,
+                                        createdAt: new Date()
+                                      };
+                                      setSelectedBatchesForPrint(prev => [...prev, qrCode]);
+                                    } else {
+                                      setSelectedBatchesForPrint(prev => prev.filter(b => 
+                                        !(b.productId === batch.productId && b.batchNumber === batch.batchNumber)
+                                      ));
+                                    }
+                                  }}
+                                  className="rounded"
+                                />
+                                <div className="flex-1">
+                                  <div className="text-sm font-medium text-gray-900">{batch.productName}</div>
+                                  <div className="text-xs text-gray-500">Batch: {batch.batchNumber} | Qty: {batch.remainingQuantity}</div>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {selectedBatchesForPrint.length > 0 && (
+                    <div className="mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <span className="text-sm text-gray-700">
+                          {selectedBatchesForPrint.length} batch(es) selected
+                        </span>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => setSelectedBatchesForPrint([])}
+                          >
+                            Clear All
+                          </Button>
+                          <Button
+                            onClick={() => {
+                              setQrCodesToPrint(selectedBatchesForPrint);
+                              setIsMassPrintModalOpen(false);
+                              setIsPrintModalOpen(true);
+                            }}
+                            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700"
+                          >
+                            <Printer className="h-4 w-4" />
+                            Print Selected ({selectedBatchesForPrint.length})
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

@@ -673,7 +673,7 @@ const Deliveries = () => {
                 <tr>
                   <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
                     {deliveries.length === 0 
-                      ? 'No deliveries pending. Purchase orders will appear here after being approved by the Operational Manager.'
+                      ? 'No deliveries pending. Purchase orders will appear here after being approved by the Overall Inventory Controller.'
                       : 'No deliveries match your search criteria.'}
                   </td>
                 </tr>

@@ -51,6 +51,14 @@ const Reports = () => {
     documentTitle: `Salon_Reports_${format(new Date(), 'yyyy-MM-dd')}`,
   });
 
+  // Set page title with role prefix
+  useEffect(() => {
+    document.title = 'Branch Manager - Reports | DSMS';
+    return () => {
+      document.title = 'DSMS - David\'s Salon Management System';
+    };
+  }, []);
+
   // Date range states
   const [dateRange, setDateRange] = useState({
     start: format(startOfMonth(new Date()), 'yyyy-MM-dd'),

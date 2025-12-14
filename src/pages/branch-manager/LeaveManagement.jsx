@@ -19,6 +19,8 @@ import { getBranchById } from '../../services/branchService';
 import { formatDate, getFullName } from '../../utils/helpers';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import ConfirmModal from '../../components/ui/ConfirmModal';
+import { Card } from '../../components/ui/Card';
+import Button from '../../components/ui/Button';
 import toast from 'react-hot-toast';
 import LeaveRequestModal from '../../components/leave/LeaveRequestModal';
 import RejectLeaveModal from '../../components/leave/RejectLeaveModal';
@@ -37,11 +39,25 @@ const LeaveManagement = () => {
   
   // Print ref
   const printRef = useRef();
+
+  // Set page title with role prefix
+  useEffect(() => {
+    document.title = 'Branch Manager - Leave Management | DSMS';
+    return () => {
+      document.title = 'DSMS - David\'s Salon Management System';
+    };
+  }, []);
   
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [staffFilter, setStaffFilter] = useState('all');
+  const [showFilters, setShowFilters] = useState(false);
+  
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(5);
 
   useEffect(() => {
     if (userBranch) {
@@ -75,11 +91,12 @@ const LeaveManagement = () => {
   const fetchStaffMembers = async () => {
     try {
       const staff = await getUsersByBranch(userBranch);
-      // Filter to stylists only (branch manager can add leaves for stylists)
-      const stylists = staff.filter(s => 
-        (s.roles && s.roles.includes('stylist')) || s.role === 'stylist'
-      );
-      setStaffMembers(stylists);
+      // Get all staff (not just stylists) for filtering
+      const allStaff = staff.filter(s => {
+        const userRoles = s.roles || (s.role ? [s.role] : []);
+        return userRoles.some(role => ['stylist', 'receptionist', 'inventory_controller'].includes(role));
+      });
+      setStaffMembers(allStaff);
     } catch (error) {
       console.error('Error fetching staff:', error);
     }
@@ -106,6 +123,11 @@ const LeaveManagement = () => {
         return false;
       }
 
+      // Staff filter
+      if (staffFilter !== 'all' && request.employeeId !== staffFilter) {
+        return false;
+      }
+
       // Branch manager can see:
       // 1. Stylist requests (requests that don't require operational approval - they approve these)
       // 2. Their own requests (regardless of status or requiresOperationalApproval) - including cancelled/pending/approved
@@ -117,7 +139,29 @@ const LeaveManagement = () => {
       // Show if: stylist request (for approval), own request (to see status), or in same branch (visibility)
       return isStylistRequest || isOwnRequest || isInSameBranch;
     });
-  }, [leaveRequests, searchTerm, statusFilter, typeFilter, currentUser.uid]);
+  }, [leaveRequests, searchTerm, statusFilter, typeFilter, staffFilter, currentUser.uid, staffMembers]);
+
+  // Pagination calculations
+  const paginationData = useMemo(() => {
+    const totalItems = filteredRequests.length;
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const paginatedRequests = filteredRequests.slice(startIndex, endIndex);
+    
+    return {
+      totalItems,
+      totalPages,
+      startIndex,
+      endIndex,
+      paginatedRequests
+    };
+  }, [filteredRequests, currentPage, itemsPerPage]);
+
+  // Reset to first page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, typeFilter, staffFilter]);
 
   const getEmployeeName = (employeeId) => {
     if (employeeId === currentUser.uid) {
@@ -414,57 +458,148 @@ const LeaveManagement = () => {
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow p-4">
-        <div className="flex flex-wrap gap-4">
-          <div className="flex-1 min-w-[200px]">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-              <input
-                type="text"
-                placeholder="Search by name..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-              />
+      {/* Filters Section */}
+      <Card>
+        <div className="p-4">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Filter className="w-5 h-5 text-gray-600" />
+              <h3 className="text-lg font-semibold text-gray-900">Filters</h3>
+              {(statusFilter !== 'all' || typeFilter !== 'all' || staffFilter !== 'all' || searchTerm) && (
+                <span className="px-2 py-1 text-xs bg-primary-100 text-primary-700 rounded-full font-medium">
+                  {[statusFilter !== 'all' ? 'Status' : null, typeFilter !== 'all' ? 'Type' : null, staffFilter !== 'all' ? 'Staff' : null, searchTerm ? 'Search' : null].filter(Boolean).length} active
+                </span>
+              )}
             </div>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
+            >
+              {showFilters ? 'Hide' : 'Show'} Filters
+              <Filter className={`w-4 h-4 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
+            </button>
           </div>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="all">All Status</option>
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-          >
-            <option value="all">All Types</option>
-            {LEAVE_TYPES.map(type => (
-              <option key={type.value} value={type.value}>{type.label}</option>
-            ))}
-          </select>
+
+          {showFilters && (
+            <div className="space-y-4 border-t border-gray-200 pt-4">
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <input
+                  type="text"
+                  placeholder="Search by employee name..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                />
+              </div>
+
+              {/* Filter Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Status Filter */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Status
+                  </label>
+                  <select
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  >
+                    <option value="all">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="approved">Approved</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+
+                {/* Type Filter */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Leave Type
+                  </label>
+                  <select
+                    value={typeFilter}
+                    onChange={(e) => setTypeFilter(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  >
+                    <option value="all">All Types</option>
+                    {LEAVE_TYPES.map(type => (
+                      <option key={type.value} value={type.value}>{type.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Staff Filter */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Staff Member
+                  </label>
+                  <select
+                    value={staffFilter}
+                    onChange={(e) => setStaffFilter(e.target.value)}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  >
+                    <option value="all">All Staff</option>
+                    <option value={currentUser.uid}>Me ({getFullName(userData) || currentUser.displayName || 'My Requests'})</option>
+                    {staffMembers.map(staff => {
+                      const staffId = staff.id || staff.uid;
+                      return (
+                        <option key={staffId} value={staffId}>
+                          {getFullName(staff)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </div>
+
+              {/* Clear Filters Button */}
+              {(statusFilter !== 'all' || typeFilter !== 'all' || staffFilter !== 'all' || searchTerm) && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      setStatusFilter('all');
+                      setTypeFilter('all');
+                      setStaffFilter('all');
+                    }}
+                    className="text-sm text-gray-600 hover:text-gray-900 underline"
+                  >
+                    Clear All Filters
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+      </Card>
 
       {/* Leave Requests List */}
-      <div className="bg-white rounded-lg shadow">
+      <Card>
         <div className="p-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold">Leave Requests</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Leave Requests</h2>
+            <div className="text-sm text-gray-600">
+              Showing {paginationData.startIndex + 1} to {Math.min(paginationData.endIndex, paginationData.totalItems)} of {paginationData.totalItems} results
+            </div>
+          </div>
         </div>
         <div className="divide-y divide-gray-200">
-          {filteredRequests.length === 0 ? (
+          {paginationData.paginatedRequests.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
-              No leave requests found
+              <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+              <p className="text-lg font-medium text-gray-900 mb-2">No leave requests found</p>
+              <p className="text-sm text-gray-500">
+                {filteredRequests.length === 0 
+                  ? "Try adjusting your search or filter criteria"
+                  : "No requests match your current filters"
+                }
+              </p>
             </div>
           ) : (
-            filteredRequests.map(request => {
+            paginationData.paginatedRequests.map(request => {
               const typeInfo = getLeaveTypeInfo(request.type);
               const employeeName = getEmployeeName(request.employeeId);
               const isOwnRequest = request.employeeId === currentUser.uid;
@@ -569,7 +704,114 @@ const LeaveManagement = () => {
             })
           )}
         </div>
-      </div>
+
+        {/* Pagination Controls */}
+        {paginationData.totalPages > 1 && (
+          <div className="bg-white px-4 py-3 border-t border-gray-200">
+            <div className="flex flex-col space-y-3">
+              {/* Top row: Items per page and page info */}
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-600">Show</span>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => {
+                      setItemsPerPage(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="border border-gray-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-[#160B53] focus:border-[#160B53]"
+                  >
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                  <span className="text-xs text-gray-600">per page</span>
+                </div>
+
+                <div className="text-xs text-gray-600">
+                  Page <span className="font-medium">{currentPage}</span> of{' '}
+                  <span className="font-medium">{paginationData.totalPages}</span>
+                </div>
+              </div>
+
+              {/* Bottom row: Navigation buttons */}
+              <div className="flex items-center justify-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                  className="px-2 py-1 text-xs min-w-[40px]"
+                >
+                  First
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="px-2 py-1 text-xs min-w-[40px]"
+                >
+                  Prev
+                </Button>
+                
+                {/* Page numbers */}
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: Math.min(3, paginationData.totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (paginationData.totalPages <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 2) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= paginationData.totalPages - 1) {
+                      pageNum = paginationData.totalPages - 2 + i;
+                    } else {
+                      pageNum = currentPage - 1 + i;
+                    }
+                    
+                    return (
+                      <Button
+                        key={pageNum}
+                        variant={currentPage === pageNum ? "primary" : "outline"}
+                        size="sm"
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`px-2 py-1 text-xs min-w-[32px] ${
+                          currentPage === pageNum 
+                            ? 'bg-[#160B53] hover:bg-[#12094A] text-white' 
+                            : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        {pageNum}
+                      </Button>
+                    );
+                  })}
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  disabled={currentPage === paginationData.totalPages}
+                  className="px-2 py-1 text-xs min-w-[40px]"
+                >
+                  Next
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(paginationData.totalPages)}
+                  disabled={currentPage === paginationData.totalPages}
+                  className="px-2 py-1 text-xs min-w-[40px]"
+                >
+                  Last
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
 
       {/* Modals */}
       <LeaveRequestModal
