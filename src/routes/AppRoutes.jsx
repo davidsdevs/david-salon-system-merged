@@ -84,7 +84,6 @@ import ReceptionistStaffSchedule from '../pages/receptionist/StaffSchedule';
 import ReceptionistServices from '../pages/receptionist/Services';
 import ReceptionistProducts from '../pages/receptionist/Products';
 import ReceptionistSalesReport from '../pages/receptionist/SalesReport';
-import ReceptionistPromotions from '../pages/receptionist/Promotions';
 import StylistDashboard from '../pages/stylist/Dashboard';
 import StylistAppointments from '../pages/stylist/Appointments';
 import StylistCheckIns from '../pages/stylist/CheckIns';
@@ -314,7 +313,6 @@ const AppRoutes = () => {
               <Route path="clients" element={<ReceptionistClients />} />
               <Route path="billing" element={<ReceptionistBilling />} />
               <Route path="sales-report" element={<ReceptionistSalesReport />} />
-              <Route path="promotions" element={<ReceptionistPromotions />} />
               <Route path="staff-schedule" element={<ReceptionistStaffSchedule />} />
               <Route path="services" element={<ReceptionistServices />} />
               <Route path="products" element={<ReceptionistProducts />} />
