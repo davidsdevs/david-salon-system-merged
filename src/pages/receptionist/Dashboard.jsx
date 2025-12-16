@@ -15,7 +15,6 @@ import {
   ArrowRight,
   Timer,
   Banknote,
-  AlertTriangle
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { ROUTES } from '../../utils/constants';
@@ -28,7 +27,6 @@ import {
   ARRIVAL_STATUS 
 } from '../../services/arrivalsService';
 import { getDailySalesSummary } from '../../services/billingService';
-import { getPendingAppointmentsCount } from '../../services/pendingAppointmentsService';
 import { Card } from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
@@ -44,9 +42,7 @@ const ReceptionistDashboard = () => {
     inServiceClients: 0,
     completedToday: 0,
     todaysRevenue: 0,
-    totalTransactions: 0,
-    pendingNeedingAttention: 0,
-    expiredPending: 0
+    totalTransactions: 0
   });
   const [upcomingAppointments, setUpcomingAppointments] = useState([]);
   const [arrivedQueue, setArrivedQueue] = useState([]);
@@ -121,20 +117,6 @@ const ReceptionistDashboard = () => {
         console.error('Error fetching daily summary:', error);
       }
 
-      // Fetch pending appointments needing attention
-      let pendingCounts = { approaching: 0, expired: 0 };
-      try {
-        const pendingResult = await getPendingAppointmentsCount(userBranch);
-        if (pendingResult.success) {
-          pendingCounts = {
-            approaching: pendingResult.approaching,
-            expired: pendingResult.expired
-          };
-        }
-      } catch (error) {
-        console.error('Error fetching pending appointments:', error);
-      }
-
       setStats({
         upcomingAppointments: upcoming.length,
         arrivedClients: arrived.length,
@@ -142,8 +124,6 @@ const ReceptionistDashboard = () => {
         completedToday: completed.length,
         todaysRevenue: dailySummary.netRevenue || 0,
         totalTransactions: dailySummary.totalTransactions || 0,
-        pendingNeedingAttention: pendingCounts.approaching,
-        expiredPending: pendingCounts.expired
       });
 
       setUpcomingAppointments(upcoming);
@@ -213,44 +193,6 @@ const ReceptionistDashboard = () => {
         </div>
       </div>
 
-      {/* Pending Appointments Alert */}
-      {(stats.pendingNeedingAttention > 0 || stats.expiredPending > 0) && (
-        <div className={`p-4 rounded-lg border-l-4 ${
-          stats.expiredPending > 0 
-            ? 'bg-red-50 border-red-500' 
-            : 'bg-amber-50 border-amber-500'
-        }`}>
-          <div className="flex items-center gap-3">
-            <AlertTriangle className={`w-6 h-6 ${
-              stats.expiredPending > 0 ? 'text-red-600' : 'text-amber-600'
-            }`} />
-            <div className="flex-1">
-              <h3 className={`font-semibold ${
-                stats.expiredPending > 0 ? 'text-red-900' : 'text-amber-900'
-              }`}>
-                {stats.expiredPending > 0 
-                  ? `${stats.expiredPending} Expired Pending Appointment${stats.expiredPending > 1 ? 's' : ''}`
-                  : `${stats.pendingNeedingAttention} Pending Appointment${stats.pendingNeedingAttention > 1 ? 's' : ''} Need Confirmation`
-                }
-              </h3>
-              <p className={`text-sm ${
-                stats.expiredPending > 0 ? 'text-red-700' : 'text-amber-700'
-              }`}>
-                {stats.expiredPending > 0
-                  ? `${stats.expiredPending} pending appointment${stats.expiredPending > 1 ? 's have' : ' has'} passed their date and ${stats.expiredPending > 1 ? 'were' : 'was'} auto-cancelled.`
-                  : `${stats.pendingNeedingAttention} pending appointment${stats.pendingNeedingAttention > 1 ? 's are' : ' is'} scheduled within 24 hours and need confirmation.`
-                }
-              </p>
-            </div>
-            <Button
-              onClick={() => navigate(ROUTES.RECEPTIONIST_APPOINTMENTS)}
-              className="bg-primary-600 hover:bg-primary-700 text-white"
-            >
-              View Appointments
-            </Button>
-          </div>
-        </div>
-      )}
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

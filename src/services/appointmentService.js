@@ -508,9 +508,9 @@ export const createAppointment = async (appointmentData, currentUser) => {
 
     // Send notification to client and stylist(s)
     try {
-      await storeAppointmentCreated(appointmentForNotification);
+      await storeAppointmentConfirmed(appointmentForNotification);
     } catch (error) {
-      console.error('Error sending appointment created notification:', error);
+      console.error('Error sending appointment confirmed notification:', error);
       // Don't fail appointment creation if notification fails
     }
 

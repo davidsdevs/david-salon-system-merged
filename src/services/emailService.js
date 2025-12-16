@@ -1080,3 +1080,242 @@ export const sendAppointmentReminderEmail = async (appointmentData, branchData) 
     email: appointmentData.clientEmail
   };
 };
+
+/**
+ * Send password reset email with role passwords
+ * @param {Object} userData - User data
+ * @param {string} userData.email - User email
+ * @param {string} userData.firstName - User first name
+ * @param {string} userData.lastName - User last name
+ * @param {Object} userData.rolePasswords - Object with role passwords {role: password}
+ * @returns {Promise<Object>} Send result
+ */
+export const sendPasswordResetEmail = async ({ email, firstName, lastName, rolePasswords }) => {
+  if (!email) {
+    return {
+      success: false,
+      error: 'Email is required'
+    };
+  }
+
+  const displayName = `${firstName || ''} ${lastName || ''}`.trim() || 'User';
+  
+  // Format role passwords
+  const rolePasswordsList = Object.entries(rolePasswords || {})
+    .map(([role, password]) => {
+      const roleLabel = role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' ');
+      return `<tr><td style="padding: 8px; font-weight: 600;">${roleLabel}:</td><td style="padding: 8px; font-family: monospace;">${password}</td></tr>`;
+    })
+    .join('');
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #2D1B4E 0%, #3d2a5f 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { padding: 30px; background-color: #f9fafb; border-radius: 0 0 8px 8px; }
+        .password-box { background: white; border: 2px solid #2D1B4E; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .password-table { width: 100%; border-collapse: collapse; }
+        .password-table td { padding: 8px; border-bottom: 1px solid #e5e7eb; }
+        .password-table tr:last-child td { border-bottom: none; }
+        .warning { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px; }
+        .footer { text-align: center; padding: 20px; color: #666; font-size: 0.9em; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>🔑 Password Reset</h1>
+        </div>
+        <div class="content">
+          <p>Dear ${displayName},</p>
+          
+          <p>Your password has been reset. Here are your new role-specific passwords:</p>
+          
+          <div class="password-box">
+            <table class="password-table">
+              ${rolePasswordsList}
+            </table>
+          </div>
+          
+          <div class="warning">
+            <strong>⚠️ Important Security Notice:</strong>
+            <ul style="margin: 10px 0; padding-left: 20px;">
+              <li>Please change these passwords after your first login</li>
+              <li>Do not share these passwords with anyone</li>
+              <li>Keep your passwords secure and confidential</li>
+            </ul>
+          </div>
+          
+          <p>You can now log in to the David's Salon Management System using your email and the appropriate role password.</p>
+          
+          <p>If you did not request this password reset, please contact our support team immediately.</p>
+          
+          <p>Best regards,<br>
+          <strong>The David's Salon Team</strong></p>
+        </div>
+        <div class="footer">
+          <p>This is an automated email. Please do not reply directly to this message.</p>
+          <p>&copy; ${new Date().getFullYear()} David's Salon. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const textContent = `
+    Password Reset - David's Salon Management System
+    
+    Dear ${displayName},
+    
+    Your password has been reset. Here are your new role-specific passwords:
+    
+    ${Object.entries(rolePasswords || {}).map(([role, password]) => {
+      const roleLabel = role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' ');
+      return `${roleLabel}: ${password}`;
+    }).join('\n')}
+    
+    ⚠️ Important Security Notice:
+    - Please change these passwords after your first login
+    - Do not share these passwords with anyone
+    - Keep your passwords secure and confidential
+    
+    You can now log in to the David's Salon Management System using your email and the appropriate role password.
+    
+    If you did not request this password reset, please contact our support team immediately.
+    
+    Best regards,
+    The David's Salon Team
+    
+    ---
+    This is an automated email. Please do not reply directly to this message.
+    © ${new Date().getFullYear()} David's Salon. All rights reserved.
+  `;
+
+  const result = await sendEmail({
+    to: email,
+    subject: 'Password Reset - David\'s Salon Management System',
+    text: textContent,
+    html: htmlContent
+  });
+
+  return {
+    success: result.success,
+    message: result.success ? 'Password reset email sent successfully' : result.error || 'Failed to send email',
+    email: email
+  };
+};
+
+/**
+ * Send profile update notification email
+ * @param {Object} userData - User data
+ * @param {string} userData.email - User email
+ * @param {string} userData.firstName - User first name
+ * @param {string} userData.lastName - User last name
+ * @param {Array} userData.changes - Array of change descriptions
+ * @param {Array} userData.changedFields - Array of changed field names
+ * @returns {Promise<Object>} Send result
+ */
+export const sendProfileUpdateEmail = async ({ email, firstName, lastName, changes, changedFields }) => {
+  if (!email) {
+    return {
+      success: false,
+      error: 'Email is required'
+    };
+  }
+
+  const displayName = `${firstName || ''} ${lastName || ''}`.trim() || 'User';
+  
+  // Format changes list
+  const changesList = (changes || []).map(change => `<li>${change}</li>`).join('');
+
+  const htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #2D1B4E 0%, #3d2a5f 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { padding: 30px; background-color: #f9fafb; border-radius: 0 0 8px 8px; }
+        .changes-box { background: white; border: 2px solid #2D1B4E; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .changes-box ul { margin: 10px 0; padding-left: 20px; }
+        .changes-box li { margin: 5px 0; }
+        .info { background: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; margin: 20px 0; border-radius: 4px; }
+        .footer { text-align: center; padding: 20px; color: #666; font-size: 0.9em; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>📝 Profile Updated</h1>
+        </div>
+        <div class="content">
+          <p>Dear ${displayName},</p>
+          
+          <p>Your profile has been updated in the David's Salon Management System.</p>
+          
+          ${changes && changes.length > 0 ? `
+          <div class="changes-box">
+            <h3 style="margin-top: 0; color: #2D1B4E;">Changes Made:</h3>
+            <ul>
+              ${changesList}
+            </ul>
+          </div>
+          ` : ''}
+          
+          <div class="info">
+            <p><strong>ℹ️ Note:</strong> If you did not make these changes or notice any suspicious activity, please contact our support team immediately.</p>
+          </div>
+          
+          <p>You can view your updated profile by logging into the system.</p>
+          
+          <p>Best regards,<br>
+          <strong>The David's Salon Team</strong></p>
+        </div>
+        <div class="footer">
+          <p>This is an automated email. Please do not reply directly to this message.</p>
+          <p>&copy; ${new Date().getFullYear()} David's Salon. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const textContent = `
+    Profile Updated - David's Salon Management System
+    
+    Dear ${displayName},
+    
+    Your profile has been updated in the David's Salon Management System.
+    
+    ${changes && changes.length > 0 ? `Changes Made:\n${changes.map(change => `- ${change}`).join('\n')}\n` : ''}
+    
+    ℹ️ Note: If you did not make these changes or notice any suspicious activity, please contact our support team immediately.
+    
+    You can view your updated profile by logging into the system.
+    
+    Best regards,
+    The David's Salon Team
+    
+    ---
+    This is an automated email. Please do not reply directly to this message.
+    © ${new Date().getFullYear()} David's Salon. All rights reserved.
+  `;
+
+  const result = await sendEmail({
+    to: email,
+    subject: 'Profile Updated - David\'s Salon',
+    text: textContent,
+    html: htmlContent
+  });
+
+  return {
+    success: result.success,
+    message: result.success ? 'Profile update email sent successfully' : result.error || 'Failed to send email',
+    email: email
+  };
+};

@@ -43,6 +43,7 @@ import ContentManagement from '../pages/system-admin/ContentManagement';
 import HomepageContentManagement from '../pages/system-admin/HomepageContentManagement';
 import MasterProducts from '../pages/system-admin/MasterProducts';
 import SeedServices from '../pages/admin/SeedServices';
+import SeedData from '../pages/admin/SeedData';
 import OperationalManagerDashboard from '../pages/operational-manager/Dashboard';
 import OperationalManagerUsersView from '../pages/operational-manager/UsersView';
 import OperationalManagerBranches from '../pages/operational-manager/Branches';
@@ -160,6 +161,7 @@ const AppRoutes = () => {
       
       {/* Public admin utility routes - No auth required */}
       <Route path="/seed-services" element={<SeedServices />} />
+      <Route path="/seed-data" element={<SeedData />} />
       
       {/* Public auth routes - Role-specific login pages */}
       <Route 

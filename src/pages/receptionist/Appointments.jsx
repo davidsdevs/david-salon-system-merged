@@ -20,7 +20,6 @@ import { getUsersByRole } from '../../services/userService';
 import { USER_ROLES } from '../../utils/constants';
 import { getArrivalsByBranch, ARRIVAL_STATUS } from '../../services/arrivalsService';
 import { triggerReminderCheck } from '../../services/appointmentReminderService';
-import { checkPendingAppointments, getPendingAppointmentsNeedingAttention } from '../../services/pendingAppointmentsService';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import AppointmentFormModal from '../../components/appointment/AppointmentFormModal';
 import AppointmentDetails from '../../components/appointment/AppointmentDetails';
@@ -118,6 +117,9 @@ const ReceptionistAppointments = () => {
         }
         return { startDate: '', endDate: '' };
       
+      case 'all':
+        return { startDate: '', endDate: '' }; // No date filter - show all appointments
+      
       default:
         return { startDate: '', endDate: '' };
     }
@@ -129,7 +131,7 @@ const ReceptionistAppointments = () => {
     if (type === 'monthYear') {
       const range = getDateRange('monthYear', selectedMonth, selectedYear);
       setFilters(prev => ({ ...prev, startDate: range.startDate, endDate: range.endDate }));
-    } else if (type !== 'custom') {
+    } else {
       const range = getDateRange(type);
       setFilters(prev => ({ ...prev, startDate: range.startDate, endDate: range.endDate }));
     }
@@ -144,15 +146,15 @@ const ReceptionistAppointments = () => {
   };
 
   const [filters, setFilters] = useState({
-    startDate: getTodayDate(),
-    endDate: getTodayDate(),
+    startDate: '', // Empty means no date filter - show all appointments
+    endDate: '', // Empty means no date filter - show all appointments
     stylistId: 'all',
     serviceId: 'all',
     checkInStatus: 'all', // 'all', 'checkedIn', 'notCheckedIn'
     clientType: 'all', // 'all', 'registered', 'guest'
     status: 'all' // 'all', 'pending', 'confirmed', 'completed', 'cancelled', 'no-show'
   });
-  const [dateFilterType, setDateFilterType] = useState('today'); // 'today', 'thisWeek', 'lastWeek', 'thisMonth', 'lastMonth', 'thisYear', 'custom', 'monthYear'
+  const [dateFilterType, setDateFilterType] = useState('all'); // Default to 'all' to show all appointments
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [showModal, setShowModal] = useState(false);
@@ -516,50 +518,10 @@ const ReceptionistAppointments = () => {
         }
       };
       
-      // Check pending appointments that need attention
-      const checkPending = async () => {
-        try {
-          // Auto-handle expired pending appointments
-          await checkPendingAppointments(userBranch, true);
-          
-          // Get pending appointments needing attention
-          const result = await getPendingAppointmentsNeedingAttention(userBranch, 24);
-          if (result.success) {
-            setPendingAlerts({
-              approaching: result.approaching,
-              expired: result.expired
-            });
-            
-            // Show toast if there are expired appointments
-            if (result.expired.length > 0) {
-              toast.error(`${result.expired.length} pending appointment(s) have expired and were auto-cancelled`, {
-                duration: 5000
-              });
-            }
-            
-            // Show warning if there are approaching appointments
-            if (result.approaching.length > 0) {
-              toast(`⚠️ ${result.approaching.length} pending appointment(s) need confirmation within 24 hours`, {
-                icon: '⚠️',
-                duration: 4000
-              });
-            }
-          }
-        } catch (error) {
-          console.error('Error checking pending appointments:', error);
-        }
-      };
-      
       // Run checks after a short delay to not block initial load
       setTimeout(() => {
         checkReminders();
-        checkPending();
       }, 2000);
-      
-      // Check pending appointments every 5 minutes
-      const pendingInterval = setInterval(checkPending, 5 * 60 * 1000);
-      
-      return () => clearInterval(pendingInterval);
     }
   }, [userBranch]);
 
@@ -1457,6 +1419,17 @@ const ReceptionistAppointments = () => {
                 <div className="grid grid-cols-4 gap-2 mb-4">
                   <button
                     type="button"
+                    onClick={() => handleDateFilterTypeChange('all')}
+                    className={`px-3 py-2 text-sm rounded-lg border transition-colors ${
+                      dateFilterType === 'all'
+                        ? 'bg-primary-600 text-white border-primary-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleDateFilterTypeChange('today')}
                     className={`px-3 py-2 text-sm rounded-lg border transition-colors ${
                       dateFilterType === 'today'
@@ -1532,17 +1505,6 @@ const ReceptionistAppointments = () => {
                   >
                     Select Month
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDateFilterTypeChange('custom')}
-                    className={`px-3 py-2 text-sm rounded-lg border transition-colors ${
-                      dateFilterType === 'custom'
-                        ? 'bg-primary-600 text-white border-primary-600'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                    }`}
-                  >
-                    Custom Range
-                  </button>
                 </div>
 
                 {/* Month/Year Picker */}
@@ -1589,39 +1551,23 @@ const ReceptionistAppointments = () => {
                   </div>
                 )}
 
-                {/* Custom Date Range Inputs */}
-                {dateFilterType === 'custom' && (
-                  <div className="grid grid-cols-2 gap-4 mb-4">
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">Start Date</label>
-                      <input
-                        type="date"
-                        value={filters.startDate}
-                        onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs text-gray-500 mb-1">End Date</label>
-                      <input
-                        type="date"
-                        value={filters.endDate}
-                        onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
-                        min={filters.startDate || undefined}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      />
-                    </div>
-                  </div>
-                )}
-
                 {/* Display Selected Range */}
-                {(dateFilterType !== 'custom' && dateFilterType !== 'monthYear') && (
+                {dateFilterType !== 'monthYear' && dateFilterType !== 'all' && (
                   <div className="p-3 bg-primary-50 rounded-lg border border-primary-200">
                     <p className="text-sm text-gray-700">
                       <span className="font-medium">Selected:</span>{' '}
                       {filters.startDate && filters.endDate
                         ? `${new Date(filters.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${new Date(filters.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                        : filters.startDate
+                        ? `${new Date(filters.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} onwards`
                         : 'No date range selected'}
+                    </p>
+                  </div>
+                )}
+                {dateFilterType === 'all' && (
+                  <div className="p-3 bg-primary-50 rounded-lg border border-primary-200">
+                    <p className="text-sm text-gray-700">
+                      <span className="font-medium">Selected:</span> All appointments (no date filter)
                     </p>
                   </div>
                 )}
@@ -1722,14 +1668,15 @@ const ReceptionistAppointments = () => {
               <button
                 onClick={() => {
                   setFilters({
-                    startDate: getTodayDate(),
-                    endDate: getTodayDate(),
+                    startDate: '', // Empty means no date filter - show all appointments
+                    endDate: '', // Empty means no date filter - show all appointments
                     stylistId: 'all',
                     serviceId: 'all',
                     checkInStatus: 'all',
                     clientType: 'all',
                     status: 'all'
                   });
+                  setDateFilterType('all'); // Reset to 'all' to show all appointments
                 }}
                 className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-100 transition-colors"
               >
