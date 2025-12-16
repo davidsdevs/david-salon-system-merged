@@ -43,6 +43,7 @@ import ContentManagement from '../pages/system-admin/ContentManagement';
 import HomepageContentManagement from '../pages/system-admin/HomepageContentManagement';
 import MasterProducts from '../pages/system-admin/MasterProducts';
 import SeedServices from '../pages/admin/SeedServices';
+import SeedData from '../pages/admin/SeedData';
 import OperationalManagerDashboard from '../pages/operational-manager/Dashboard';
 import OperationalManagerUsersView from '../pages/operational-manager/UsersView';
 import OperationalManagerBranches from '../pages/operational-manager/Branches';
@@ -83,7 +84,6 @@ import ReceptionistStaffSchedule from '../pages/receptionist/StaffSchedule';
 import ReceptionistServices from '../pages/receptionist/Services';
 import ReceptionistProducts from '../pages/receptionist/Products';
 import ReceptionistSalesReport from '../pages/receptionist/SalesReport';
-import ReceptionistPromotions from '../pages/receptionist/Promotions';
 import StylistDashboard from '../pages/stylist/Dashboard';
 import StylistAppointments from '../pages/stylist/Appointments';
 import StylistCheckIns from '../pages/stylist/CheckIns';
@@ -160,6 +160,7 @@ const AppRoutes = () => {
       
       {/* Public admin utility routes - No auth required */}
       <Route path="/seed-services" element={<SeedServices />} />
+      <Route path="/seed-data" element={<SeedData />} />
       
       {/* Public auth routes - Role-specific login pages */}
       <Route 
@@ -312,7 +313,6 @@ const AppRoutes = () => {
               <Route path="clients" element={<ReceptionistClients />} />
               <Route path="billing" element={<ReceptionistBilling />} />
               <Route path="sales-report" element={<ReceptionistSalesReport />} />
-              <Route path="promotions" element={<ReceptionistPromotions />} />
               <Route path="staff-schedule" element={<ReceptionistStaffSchedule />} />
               <Route path="services" element={<ReceptionistServices />} />
               <Route path="products" element={<ReceptionistProducts />} />
